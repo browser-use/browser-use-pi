@@ -1,0 +1,33 @@
+test/agent.test.mjs
+  s_83195cbba57757::t_138b3973096a87 549,591-594,610-611
+  s_83195cbba57757::t_26809f80b9586e 586,588,590,595,609,640,642
+  s_83195cbba57757::t_7aca66b9c43eda 548
+README.md
+  s_83195cbba57757::t_287b007f8a95f1 63
+docs/iteration-protocol.md
+  s_83195cbba57757::t_287b007f8a95f1 118-119
+test/provider.test.mjs
+  s_83195cbba57757::t_d9316f67bfb0e4 161
+  s_83195cbba57757::t_138b3973096a87 56-58,103-105,108
+  s_83195cbba57757::t_8607273e3afba4 59-77,79-102,109-116,118-119,121-159
+src/agent.ts
+  s_83195cbba57757::t_d865ff66ad9e7b 313-315
+docs/confirmation-trace-audit.md
+  s_83195cbba57757::t_ccf7bb1db5e36d 1-9,14-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6d0ee9b1c1ab3edc468d059811dfbd75e98d76ce",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
