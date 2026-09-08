@@ -1,0 +1,27 @@
+test/control-label.test.mjs
+  s_83195cbba57757::t_0a799c4d7927bf 74-75
+  s_83195cbba57757::t_079dadc751ed23 1-26,29-32,65-67,70-73,76,90-92,95-97,106-109,140
+  s_83195cbba57757::t_787136e138efa5 27-28,33-64,68-69,77-89,93-94,98-105,110-139
+docs/browser.md
+  s_83195cbba57757::t_bc55c6b2f6a40d 57-58
+src/page.ts
+  s_83195cbba57757::t_0a799c4d7927bf 263-266,273
+  s_83195cbba57757::t_1bd4670fd8a130 224,231-241,243,253-262,274-275,282,285-288,292-299,302-304,323,334-340
+  s_83195cbba57757::t_bc55c6b2f6a40d 267-272,276-281,283-284,289-291,324-330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3126789ce0942c7d2da9f2cc29b7ef4f92ffeb8a",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
