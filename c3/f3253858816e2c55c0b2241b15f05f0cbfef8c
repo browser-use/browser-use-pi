@@ -1,0 +1,21 @@
+docs/confirmation3-trace-audit.md
+  s_83195cbba57757::t_9c00fc54bf7821 253-266
+  s_83195cbba57757::t_255804fc9ed888 229-240
+  s_83195cbba57757::t_0e2a7ac4238a95 241-252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c3f3253858816e2c55c0b2241b15f05f0cbfef8c",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
