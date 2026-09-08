@@ -1,0 +1,24 @@
+docs/iteration-protocol.md
+  s_83195cbba57757::t_1ae4c80d48216b 91,109-116
+docs/extraction-experiment.md
+  s_83195cbba57757::t_1ae4c80d48216b 54-73,76-79
+  s_83195cbba57757::t_09c9632b178613 74-75
+docs/benchmark-overview.md
+  s_83195cbba57757::t_1ae4c80d48216b 49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6da4749d0cbfd45aacde3c3e3b046eebd2a6ae85",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
