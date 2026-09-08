@@ -1,0 +1,24 @@
+docs/recovery.md
+  s_83195cbba57757::t_afa6f1cba676e4 28-29
+src/agent.ts
+  s_83195cbba57757::t_7ccc441ed22d63 310
+test/agent.test.mjs
+  s_83195cbba57757::t_921942ecbebe7d 508,517-523,525-526,533-538,564-565,569-570
+  s_83195cbba57757::t_7ccc441ed22d63 496-507,509-515
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "287290c1edc42677683ed5d4a9131259bdbbaa50",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
