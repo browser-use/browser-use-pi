@@ -1,0 +1,27 @@
+docs/workspace-experiment.md
+  s_83195cbba57757::t_5391acb2da3cd8 1-21
+src/agent.ts
+  s_83195cbba57757::t_210b12b413e967 191
+src/research-tools.ts
+  s_83195cbba57757::t_210b12b413e967 1-3,5,7-41,43-46,68-69
+test/recovery.test.mjs
+  s_83195cbba57757::t_8aed04e5b708ea 3,10,160-167,169-176,178-198,200-204,206-207
+test/agent.test.mjs
+  s_83195cbba57757::t_8aed04e5b708ea 55-56,59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4cade93461cbfc366b7e8b7e929a0349de6d5b17",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
