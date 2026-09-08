@@ -1,0 +1,23 @@
+test/runtime.test.mjs
+  s_83195cbba57757::t_812058c5ebd2fa 33-36,38-49,51-52
+docs/recovery.md
+  s_83195cbba57757::t_c7fc31e3dcc809 70-71
+src/prompt.ts
+  s_83195cbba57757::t_c7fc31e3dcc809 33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f41c5b7116ede9393696b67a166e38f91893163f",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
