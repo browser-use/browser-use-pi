@@ -1,0 +1,26 @@
+docs/benchmark-overview.md
+  s_83195cbba57757::t_7e071da74da8f5 51
+  s_83195cbba57757::t_1b4b40af40ba75 52
+docs/confirmation-trace-audit.md
+  s_83195cbba57757::t_7e071da74da8f5 23-24
+docs/reliability.md
+  s_83195cbba57757::t_0458901612367c 63-64,75
+docs/iteration-protocol.md
+  s_83195cbba57757::t_7e071da74da8f5 116,120-124,126-139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8b5455a6fa64ce95ce44a46aae060448bba8971d",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
