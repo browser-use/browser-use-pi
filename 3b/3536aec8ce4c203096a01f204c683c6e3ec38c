@@ -1,0 +1,21 @@
+docs/semantic-validation-experiment.md
+  s_83195cbba57757::t_5560ca76ad1928 3,32-47
+docs/iteration-protocol.md
+  s_83195cbba57757::t_4f9fcd78cff340 169-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3b3536aec8ce4c203096a01f204c683c6e3ec38c",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
