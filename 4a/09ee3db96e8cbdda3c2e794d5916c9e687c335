@@ -1,0 +1,21 @@
+docs/extraction-experiment.md
+  s_83195cbba57757::t_b66cb64305352b 1-18
+src/prompt.ts
+  s_83195cbba57757::t_b66cb64305352b 31-32,39-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4a09ee3db96e8cbdda3c2e794d5916c9e687c335",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
