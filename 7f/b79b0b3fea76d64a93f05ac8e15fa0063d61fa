@@ -1,0 +1,24 @@
+docs/iteration-protocol.md
+  s_83195cbba57757::t_4cd9c6603e4730 38,45-51,53-60,62-67
+  s_83195cbba57757::t_9cbaef7bfe8270 61
+docs/workspace-experiment.md
+  s_83195cbba57757::t_9cbaef7bfe8270 15-17
+docs/extraction-experiment.md
+  s_83195cbba57757::t_9cbaef7bfe8270 7,18-24,26-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7fb79b0b3fea76d64a93f05ac8e15fa0063d61fa",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
