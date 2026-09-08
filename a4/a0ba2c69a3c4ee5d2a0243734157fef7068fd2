@@ -1,0 +1,47 @@
+src/images.ts
+  s_83195cbba57757::t_6ebd180effc88f 1-21,27-33,39-60,66-75,79-80,86-91,99-101,105-106,110-113
+  s_83195cbba57757::t_93bfd6bbc75d04 22-26,34-38,61-65,76-78,81-85,92-98,102-104,107-109
+scripts/build-python.mjs
+  s_83195cbba57757::t_4b4b935678ac4a 2-3,8-10,24
+src/worker.ts
+  s_83195cbba57757::t_6ebd180effc88f 14,271,273-274
+  s_83195cbba57757::t_485cf0ef92b1cf 133
+test/images.test.mjs
+  s_83195cbba57757::t_0185f8279128b2 1-6,8-31,33-49,51-59
+src/prompt.ts
+  s_83195cbba57757::t_485cf0ef92b1cf 24
+test/agent.test.mjs
+  s_83195cbba57757::t_0185f8279128b2 15,667-670,672-678,683-689
+  s_83195cbba57757::t_38c116381ea9ee 671,679-682
+test/runtime.test.mjs
+  s_83195cbba57757::t_fa744581f9491e 197-198,208-211,217,224-227
+  s_83195cbba57757::t_38c116381ea9ee 203-204
+  s_83195cbba57757::t_93bfd6bbc75d04 213
+  s_83195cbba57757::t_0185f8279128b2 8,196,199-202,205-207,212,214-216,218-223,228
+docs/browser.md
+  s_83195cbba57757::t_485cf0ef92b1cf 97,104-106
+docs/image-limits-experiment.md
+  s_83195cbba57757::t_93bfd6bbc75d04 19-20
+  s_83195cbba57757::t_485cf0ef92b1cf 1-18,23
+  s_83195cbba57757::t_1237672d3dda71 21-22
+python/pyproject.toml
+  s_83195cbba57757::t_4b4b935678ac4a 19
+python/tests/test_client.py
+  s_83195cbba57757::t_4b4b935678ac4a 4,179-203
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a4a0ba2c69a3c4ee5d2a0243734157fef7068fd2",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
