@@ -1,0 +1,31 @@
+docs/browser.md
+  s_83195cbba57757::t_ce3887d31daa19 48-54
+src/prompt.ts
+  s_83195cbba57757::t_ce3887d31daa19 9
+src/page.ts
+  s_83195cbba57757::t_ce3887d31daa19 7-36,173
+test/accessibility-state.test.mjs
+  s_83195cbba57757::t_87cf8ac055f9bb 1-35,37-66,68-99,101-105,107-112
+docs/accessibility-state-experiment.md
+  s_83195cbba57757::t_6dda60bfc5eaba 1-20,22-25
+  s_83195cbba57757::t_40069fc2e4b69d 21,26-27
+docs/confirmation2-trace-audit.md
+  s_83195cbba57757::t_ec70043b49defc 58-65
+  s_83195cbba57757::t_6dda60bfc5eaba 66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7d1c107cd506c3e583a49f45260ffa4e9cf45ad9",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
