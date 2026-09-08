@@ -1,0 +1,20 @@
+docs/iteration-protocol.md
+  s_83195cbba57757::t_2401a91104cad2 97
+  s_83195cbba57757::t_ddf27a63943efd 95-96,98-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9bf96be6720170158400b4191c6eee9b08d5cb8d",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
