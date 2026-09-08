@@ -1,0 +1,27 @@
+eval/run.mjs
+  s_83195cbba57757::t_2da2ca59eefb72 17,61-65,218-220
+docs/browser.md
+  s_83195cbba57757::t_6312428cfec028 20-38
+docs/confirmation3-trace-audit.md
+  s_83195cbba57757::t_6312428cfec028 295-306
+eval/README.md
+  s_83195cbba57757::t_6312428cfec028 15-18
+test/eval.test.mjs
+  s_83195cbba57757::t_2da2ca59eefb72 11-13,27-29,74,77,171,181-184,186,278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f3e69a612c362aad33d7fe46078fd3704bee66d5",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
