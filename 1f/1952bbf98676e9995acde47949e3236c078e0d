@@ -1,0 +1,23 @@
+test/agent.test.mjs
+  s_83195cbba57757::t_953e606b4180c6 496-522,532,535,537,548-549,578
+docs/reliability.md
+  s_83195cbba57757::t_e9d6b1d33fcb37 61-62,71
+src/agent.ts
+  s_83195cbba57757::t_953e606b4180c6 310,312-315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1f1952bbf98676e9995acde47949e3236c078e0d",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
