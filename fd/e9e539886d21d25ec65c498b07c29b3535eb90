@@ -1,0 +1,24 @@
+README.md
+  s_83195cbba57757::t_5a179542de9db3 67
+docs/confirmation3-trace-audit.md
+  s_83195cbba57757::t_ab9ae06025f29c 188-195
+  s_83195cbba57757::t_cd623a205e4ac0 172-187
+docs/iteration-protocol.md
+  s_83195cbba57757::t_5a179542de9db3 262-267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "fde9e539886d21d25ec65c498b07c29b3535eb90",
+  "prompts": {},
+  "sessions": {
+    "s_83195cbba57757": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a07274-b8dd-7ea1-8998-0bcfc35e7924",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
