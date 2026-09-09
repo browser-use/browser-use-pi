@@ -13,5 +13,5 @@ hero:
       link: /quickstart
     - theme: alt
       text: GitHub
-      link: https://github.com/browser-use/browser-use-js/tree/main
+      link: https://github.com/browser-use/browser-use-pi/tree/main
 ---

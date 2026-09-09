@@ -6,7 +6,7 @@ export default defineConfig({
   cleanUrls: true,
   themeConfig: {
     logo: '/mark.svg',
-    nav: [{ text: 'GitHub', link: 'https://github.com/browser-use/browser-use-js/tree/main' }],
+    nav: [{ text: 'GitHub', link: 'https://github.com/browser-use/browser-use-pi/tree/main' }],
     sidebar: [
       { text: 'Quickstart', link: '/quickstart' },
       { text: 'Models', link: '/models' },

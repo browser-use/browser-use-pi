@@ -55,7 +55,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/browser-use/browser-use-js.git"
+    "url": "git+https://github.com/browser-use/browser-use-pi.git"
   },
   "bin": {
     "bu-pi-server": "./dist/server.js"

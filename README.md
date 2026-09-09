@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/browser-use/browser-use-js/main/docs/public/banner.webp" alt="A white arch above the clouds" width="100%" />
+<img src="https://raw.githubusercontent.com/browser-use/browser-use-pi/main/docs/public/banner.webp" alt="A white arch above the clouds" width="100%" />
 
 # Browser Use Pi
 
