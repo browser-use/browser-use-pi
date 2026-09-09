@@ -1,9 +1,9 @@
 ---
 layout: home
 hero:
-  name: Browser Use JS
-  text: Pi, with a browser.
-  tagline: Persistent JavaScript. Raw CDP. Let the agent write the rest.
+  name: Browser Use Pi
+  text: Browser Use, built on Pi.
+  tagline: Pi Mono + persistent V8 REPL + raw CDP. In TypeScript.
   image:
     src: /mark.svg
     alt: Browser Use

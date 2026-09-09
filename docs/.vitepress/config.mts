@@ -1,8 +1,8 @@
 import { defineConfig } from 'vitepress';
 
 export default defineConfig({
-  title: 'Browser Use JS',
-  description: 'Pi, with a browser. Persistent JavaScript and raw CDP.',
+  title: 'Browser Use Pi',
+  description: 'Browser Use, built on Pi. Persistent V8 REPL + raw CDP, in TypeScript.',
   cleanUrls: true,
   themeConfig: {
     logo: '/mark.svg',
