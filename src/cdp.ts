@@ -117,6 +117,8 @@ export class CDP {
       throw new Error('Chrome approval is macOS only.');
     positiveInteger('timeoutMs', timeoutMs);
     const url = new URL(endpoint);
+    // Host-level only: enough to locate the browser, without echoing paths or tokens.
+    const target = `${url.protocol}//${url.host}`;
     if (url.protocol === 'http:' || url.protocol === 'https:') {
       url.pathname = `${url.pathname.replace(/\/$/, '')}/json/version`;
       const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
@@ -132,19 +134,28 @@ export class CDP {
         approval.abort();
         clearTimeout(timer);
         socket.removeEventListener('open', open);
-        socket.removeEventListener('error', failed);
-        socket.removeEventListener('close', failed);
+        socket.removeEventListener('error', onError);
+        socket.removeEventListener('close', onClose);
         if (error) {
           socket.close();
           reject(error);
         } else resolve();
       };
       const open = () => finish();
-      const failed = () => finish(new Error('Could not connect to CDP endpoint.'));
-      const timer = setTimeout(() => finish(new Error('CDP connection timed out.')), timeoutMs);
+      const failed = (reason: string) =>
+        finish(new Error(`Could not connect to CDP endpoint ${target} (${reason}).`));
+      const onError = () => failed('socket error');
+      const onClose = (event: CloseEvent) => {
+        const reason = event.reason ? `: ${event.reason.slice(0, 120)}` : '';
+        failed(`socket closed with code ${event.code}${reason}`);
+      };
+      const timer = setTimeout(
+        () => finish(new Error(`CDP connection to ${target} timed out after ${timeoutMs} ms.`)),
+        timeoutMs,
+      );
       socket.addEventListener('open', open, { once: true });
-      socket.addEventListener('error', failed, { once: true });
-      socket.addEventListener('close', failed, { once: true });
+      socket.addEventListener('error', onError, { once: true });
+      socket.addEventListener('close', onClose, { once: true });
       if (approveConnection) {
         void (async () => {
           while (!approval.signal.aborted) {

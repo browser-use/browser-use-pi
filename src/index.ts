@@ -55,12 +55,13 @@ export class BrowserUse {
   private manualCell: Promise<unknown> | undefined;
   private runId = '';
   private hasConversation = false;
+  private pendingWarning: string | undefined;
 
   private constructor(
     private readonly config: BrowserUseOptions & { streamFn: StreamFn },
     private readonly model: Model<Api>,
     private readonly runtime: BrowserRuntime,
-    private readonly browser: Awaited<ReturnType<typeof openBrowser>>,
+    private browser: Awaited<ReturnType<typeof openBrowser>>,
     readonly workspace: string,
   ) {
     this.reportRun = telemetry(config.telemetry, config.browser);
@@ -214,7 +215,21 @@ export class BrowserUse {
     this.runId = randomUUID();
     this.controller = new AbortController();
     this.control = new RunControl((paused) => this.emit({ type: paused ? 'paused' : 'resumed' }));
-    this.activeRun = this.performRun(task, options, followUp);
+    const signal = this.controller.signal;
+    this.activeRun = (async () => {
+      try {
+        await this.reviveBrowser(signal);
+      } catch (error) {
+        // performRun never started, so its cleanup has to run here or the session stays busy.
+        this.control?.finish();
+        this.active = false;
+        this.controller = undefined;
+        this.control = undefined;
+        throw error;
+      }
+      if (this.closed) throw new Error('BrowserUse is closed. Create a new session.');
+      return await this.performRun(task, options, followUp);
+    })();
     return this.activeRun;
   }
 
@@ -262,6 +277,10 @@ export class BrowserUse {
         );
       };
       await record({ type: 'run_start', task, followUp });
+      if (this.pendingWarning) {
+        await record({ type: 'warning', message: this.pendingWarning });
+        this.pendingWarning = undefined;
+      }
       if (this.config.recording && !signal.aborted) {
         recorder = new Recorder(
           join(this.workspace, '.browser-use', 'recordings', this.runId),
@@ -428,7 +447,11 @@ export class BrowserUse {
     this.control?.resume();
   }
 
-  /** Direct browser code. Use the same page and variables as the agent. */
+  /**
+   * Direct browser code. Use the same page and variables as the agent.
+   * A browser this SDK launched that exited while idle is relaunched first, so a dead
+   * process cannot wedge the session; that also resets pages and JavaScript bindings.
+   */
   async execute(code: string, options: { timeoutMs?: number; signal?: AbortSignal } = {}) {
     const duringPause = this.isPaused;
     if (!duringPause) this.assertIdle();
@@ -443,6 +466,7 @@ export class BrowserUse {
             ? AbortSignal.any([options.signal, this.controller.signal])
             : this.controller.signal
           : options.signal;
+      await this.reviveBrowser(signal);
       const cell = this.runtime.execute(
         code,
         options.timeoutMs ?? this.config.cellTimeoutMs ?? 30_000,
@@ -454,6 +478,33 @@ export class BrowserUse {
       if (duringPause) this.manualCell = undefined;
       else this.active = false;
     }
+  }
+
+  /**
+   * Relaunch a browser this SDK launched that exited while idle, so a dead browser
+   * does not wedge the session. Caller-owned (`Browser.chrome`) and cloud browsers
+   * expose no `relaunch`: they are not ours to restart.
+   */
+  private async reviveBrowser(signal?: AbortSignal): Promise<boolean> {
+    if (
+      this.closed ||
+      signal?.aborted ||
+      !this.browser.relaunch ||
+      this.browser.alive?.() !== false
+    )
+      return false;
+    const revived = await this.browser.relaunch();
+    // close() can run while the replacement launches. The runtime is closed then, so this
+    // replacement would be unreachable: dispose of it here instead of leaking a browser.
+    if (this.closed) {
+      await revived.close().catch(() => {});
+      return false;
+    }
+    this.browser = revived;
+    await this.runtime.adoptEndpoint(revived.endpoint);
+    this.pendingWarning =
+      'The browser process had exited and was relaunched. Pages, tabs and JavaScript bindings were reset; inspect browser state before continuing and never replay uncertain actions automatically.';
+    return true;
   }
 
   private assertIdle() {

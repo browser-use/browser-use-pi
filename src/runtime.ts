@@ -239,6 +239,18 @@ export class BrowserRuntime {
     }
   }
 
+  /**
+   * Point the runtime at a replacement browser. The worker is dropped so the next cell
+   * reconnects, and targets owned by the previous browser are forgotten with it.
+   */
+  async adoptEndpoint(endpoint: string): Promise<void> {
+    if (this.closed) return;
+    this.config.endpoint = endpoint;
+    this.owned.clear();
+    this.targetId = undefined;
+    await this.terminate();
+  }
+
   async close() {
     if (this.closed) return;
     this.closed = true;
@@ -256,11 +268,29 @@ export class BrowserRuntime {
     }
     await this.terminate();
     if (this.owned.size) {
-      const cdp = await CDP.connect(
-        this.config.endpoint,
-        this.config.operationTimeoutMs,
-        this.config.approveConnection,
-      );
+      // A browser that exited cannot be cleaned up, but a transient connect failure can: retry
+      // once, and only after a quick refusal so close() never spends a second full timeout on
+      // an endpoint that is not answering at all.
+      let cdp: CDP | undefined;
+      for (let attempt = 0; attempt < 2 && !cdp; attempt += 1) {
+        const startedAt = Date.now();
+        try {
+          cdp = await CDP.connect(
+            this.config.endpoint,
+            this.config.operationTimeoutMs,
+            this.config.approveConnection,
+          );
+        } catch {
+          if (attempt > 0 || Date.now() - startedAt > 1_000) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+      if (!cdp) {
+        // The browser is gone; its tabs went with it. Closing a session must not fail just
+        // because the browser exited first, so the cleanup is dropped rather than thrown.
+        this.owned.clear();
+        return;
+      }
       try {
         const { targetInfos } = await cdp.send('Target.getTargets');
         // Include popups recursively, but never a pre-existing caller tab.
