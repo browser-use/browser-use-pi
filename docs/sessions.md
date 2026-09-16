@@ -62,6 +62,8 @@ A local `profileDir` stores cookies, local storage and IndexedDB on disk. First 
 
 Cloud uses a provider-managed `profileId`, not a local directory. Its save/sync behavior follows Browser Use Cloud. Real Chrome retains its own profile normally. Workspace and conversation history never restore login. Remote downloads stay on the remote browser host; retrieve them through the provider API.
 
+A browser this SDK launched is relaunched when its process exits while the session is idle (crash, `kill`, OS cleanup of temporary files). The next `run()` or `followUp()` starts a fresh browser and reports a `warning`; `execute()` relaunches too, but has no event stream. Pages, tabs and JavaScript bindings are reset with the old process. Browsers you own — `Browser.chrome(...)` and `Browser.cloud(...)` — are never relaunched: those are not ours to restart, so a browser that is gone keeps failing until you reconnect or create a new session. `Browser.chromium(...)` handles report `alive()` and `relaunch()` when you need to act on that yourself.
+
 ## Domains and secrets
 
 ```js
