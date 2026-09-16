@@ -150,7 +150,7 @@ export class CDP {
         failed(`socket closed with code ${event.code}${reason}`);
       };
       const timer = setTimeout(
-        () => finish(new Error(`CDP connection timed out after ${timeoutMs} ms.`)),
+        () => finish(new Error(`CDP connection to ${target} timed out after ${timeoutMs} ms.`)),
         timeoutMs,
       );
       socket.addEventListener('open', open, { once: true });

@@ -142,11 +142,14 @@ test('response taps are passive, single-delivery and bound to the dispatched com
   }
 });
 
-test('connect failures name the endpoint host and socket failure without echoing the path', async () => {
+test('connect failures name the endpoint host and never echo the path', async () => {
   await assert.rejects(
     CDP.connect('ws://127.0.0.1:1/devtools/browser/secret-session-id', 2000),
     (error) => {
-      assert.match(error.message, /Could not connect to CDP endpoint ws:\/\/127\.0\.0\.1:1 \(socket /);
+      // Which branch fires depends on the OS refusing the connection or black-holing the port;
+      // both must point at the endpoint and keep the devtools path out of the message.
+      assert.match(error.message, /ws:\/\/127\.0\.0\.1:1/);
+      assert.match(error.message, /\(socket |timed out after/);
       assert.doesNotMatch(error.message, /secret-session-id/);
       return true;
     },
