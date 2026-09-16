@@ -239,6 +239,18 @@ export class BrowserRuntime {
     }
   }
 
+  /**
+   * Point the runtime at a replacement browser. The worker is dropped so the next cell
+   * reconnects, and targets owned by the previous browser are forgotten with it.
+   */
+  async adoptEndpoint(endpoint: string): Promise<void> {
+    if (this.closed) return;
+    this.config.endpoint = endpoint;
+    this.owned.clear();
+    this.targetId = undefined;
+    await this.terminate();
+  }
+
   async close() {
     if (this.closed) return;
     this.closed = true;
@@ -256,11 +268,19 @@ export class BrowserRuntime {
     }
     await this.terminate();
     if (this.owned.size) {
-      const cdp = await CDP.connect(
-        this.config.endpoint,
-        this.config.operationTimeoutMs,
-        this.config.approveConnection,
-      );
+      let cdp: CDP;
+      try {
+        cdp = await CDP.connect(
+          this.config.endpoint,
+          this.config.operationTimeoutMs,
+          this.config.approveConnection,
+        );
+      } catch {
+        // The browser is already gone; its tabs went with it and nothing can be cleaned up.
+        // Closing a session must not fail just because the browser exited first.
+        this.owned.clear();
+        return;
+      }
       try {
         const { targetInfos } = await cdp.send('Target.getTargets');
         // Include popups recursively, but never a pre-existing caller tab.

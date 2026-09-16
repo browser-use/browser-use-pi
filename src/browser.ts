@@ -33,6 +33,19 @@ export type BrowserOptions =
     })
   | ({ kind?: never; cdpUrl?: never; targetId?: never } & LocalBrowserOptions);
 
+/**
+ * A connected browser. `alive` and `relaunch` exist only for browsers the SDK
+ * launched itself: caller-owned Chrome and cloud browsers are not ours to restart.
+ */
+export interface BrowserHandle {
+  endpoint: string;
+  close(): Promise<void>;
+  /** False once a browser this SDK launched has exited. */
+  alive?(): boolean;
+  /** Launches a replacement for a browser this SDK launched that exited. */
+  relaunch?(): Promise<BrowserHandle>;
+}
+
 /** Declarative browser choices. BrowserUse owns the resulting connection lifecycle. */
 export const Browser = {
   cloud: (options: CloudBrowserOptions): BrowserOptions => ({ ...options, kind: 'cloud' }),
@@ -177,7 +190,7 @@ async function executable(options: LocalBrowserOptions) {
 }
 
 /** Local Chrome has an isolated temporary profile; external Chrome always belongs to the caller. */
-export async function openBrowser(options: BrowserOptions = {}) {
+export async function openBrowser(options: BrowserOptions = {}): Promise<BrowserHandle> {
   if (options.kind !== undefined && !['cloud', 'chrome', 'chromium'].includes(options.kind))
     throw new Error('Unknown browser kind. Use Browser.cloud, Browser.chromium or Browser.chrome.');
   if (options.kind === 'cloud') return openCloud(options);
@@ -198,7 +211,12 @@ export async function openBrowser(options: BrowserOptions = {}) {
       throw new Error('cdpUrl must be an HTTP(S) or WebSocket endpoint.');
     return { endpoint: options.cdpUrl, close: async () => {} };
   }
-  const path = await executable(options as LocalBrowserOptions);
+  return await launchLocalBrowser(options as LocalBrowserOptions);
+}
+
+/** Launches a local Chrome this SDK owns, and can replace if it exits. */
+async function launchLocalBrowser(options: LocalBrowserOptions): Promise<BrowserHandle> {
+  const path = await executable(options);
   const persistent = !!options.profileDir;
   if (options.profileDir) await mkdir(options.profileDir, { recursive: true, mode: 0o700 });
   const profile = options.profileDir
@@ -242,7 +260,9 @@ export async function openBrowser(options: BrowserOptions = {}) {
       }
       await lock.close();
       await rm(lockPath, { force: true });
-      if (!persistent) await rm(profile, { recursive: true, force: true });
+      // A killed Chrome's children can still hold files, so retry instead of leaking the profile.
+      if (!persistent)
+        await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     })());
   try {
     const deadline = Date.now() + 15_000;
@@ -253,10 +273,20 @@ export async function openBrowser(options: BrowserOptions = {}) {
       try {
         if ((await stat(join(profile, 'DevToolsActivePort'))).mtimeMs < launchedAt - 1)
           throw new Error('Waiting for a fresh DevTools endpoint.');
-        const [port, path] = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8'))
+        const [port, websocketPath] = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8'))
           .trim()
           .split('\n');
-        if (port && path) return { endpoint: `ws://127.0.0.1:${port}${path}`, close };
+        if (port && websocketPath)
+          return {
+            endpoint: `ws://127.0.0.1:${port}${websocketPath}`,
+            close,
+            alive: () => child.exitCode === null && child.signalCode === null,
+            relaunch: async () => {
+              // The browser is already gone; a failed cleanup must not block its replacement.
+              await close().catch(() => {});
+              return launchLocalBrowser(options);
+            },
+          };
       } catch {}
       await delay(50);
     }
