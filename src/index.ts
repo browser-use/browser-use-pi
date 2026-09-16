@@ -215,8 +215,19 @@ export class BrowserUse {
     this.runId = randomUUID();
     this.controller = new AbortController();
     this.control = new RunControl((paused) => this.emit({ type: paused ? 'paused' : 'resumed' }));
+    const signal = this.controller.signal;
     this.activeRun = (async () => {
-      await this.reviveBrowser();
+      try {
+        await this.reviveBrowser(signal);
+      } catch (error) {
+        // performRun never started, so its cleanup has to run here or the session stays busy.
+        this.control?.finish();
+        this.active = false;
+        this.controller = undefined;
+        this.control = undefined;
+        throw error;
+      }
+      if (this.closed) throw new Error('BrowserUse is closed. Create a new session.');
       return await this.performRun(task, options, followUp);
     })();
     return this.activeRun;
@@ -455,7 +466,7 @@ export class BrowserUse {
             ? AbortSignal.any([options.signal, this.controller.signal])
             : this.controller.signal
           : options.signal;
-      await this.reviveBrowser();
+      await this.reviveBrowser(signal);
       const cell = this.runtime.execute(
         code,
         options.timeoutMs ?? this.config.cellTimeoutMs ?? 30_000,
@@ -474,10 +485,23 @@ export class BrowserUse {
    * does not wedge the session. Caller-owned (`Browser.chrome`) and cloud browsers
    * expose no `relaunch`: they are not ours to restart.
    */
-  private async reviveBrowser(): Promise<boolean> {
-    if (this.closed || !this.browser.relaunch || this.browser.alive?.() !== false) return false;
-    this.browser = await this.browser.relaunch();
-    await this.runtime.adoptEndpoint(this.browser.endpoint);
+  private async reviveBrowser(signal?: AbortSignal): Promise<boolean> {
+    if (
+      this.closed ||
+      signal?.aborted ||
+      !this.browser.relaunch ||
+      this.browser.alive?.() !== false
+    )
+      return false;
+    const revived = await this.browser.relaunch();
+    // close() can run while the replacement launches. The runtime is closed then, so this
+    // replacement would be unreachable: dispose of it here instead of leaking a browser.
+    if (this.closed) {
+      await revived.close().catch(() => {});
+      return false;
+    }
+    this.browser = revived;
+    await this.runtime.adoptEndpoint(revived.endpoint);
     this.pendingWarning =
       'The browser process had exited and was relaunched. Pages, tabs and JavaScript bindings were reset; inspect browser state before continuing and never replay uncertain actions automatically.';
     return true;

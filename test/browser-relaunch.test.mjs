@@ -121,3 +121,45 @@ test('caller-owned browsers still fail loudly: nothing is relaunched for them', 
     await f.close();
   }
 });
+
+test('a failing relaunch reports the failure and leaves the session usable', async () => {
+  const f = await session([call('finish', { result: 'unused' })]);
+  try {
+    await f.agent.browser.close();
+    f.agent.browser.relaunch = async () => {
+      throw new Error('replacement launch failed');
+    };
+    await assert.rejects(f.agent.run('first', { maxSteps: 1 }), /replacement launch failed/);
+    // Recovery failure must not leave the session busy for every later call.
+    await assert.rejects(f.agent.run('second', { maxSteps: 1 }), /replacement launch failed/);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a replacement that arrives after close() is disposed instead of leaked', async () => {
+  const f = await session([call('finish', { result: 'unused' })]);
+  let replacementClosed = false;
+  const relaunch = f.agent.browser.relaunch.bind(f.agent.browser);
+  f.agent.browser.relaunch = async () => {
+    const handle = await relaunch();
+    const close = handle.close.bind(handle);
+    handle.close = async () => {
+      replacementClosed = true;
+      await close();
+    };
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return handle;
+  };
+  try {
+    await f.agent.browser.close();
+    const running = f.agent.run('slow recovery', { maxSteps: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const closing = f.agent.close();
+    await assert.rejects(running, /BrowserUse is closed/);
+    await closing;
+    assert.equal(replacementClosed, true);
+  } finally {
+    await f.close();
+  }
+});
