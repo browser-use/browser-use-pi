@@ -141,3 +141,14 @@ test('response taps are passive, single-delivery and bound to the dispatched com
     lazy.close();
   }
 });
+
+test('connect failures name the endpoint host and socket failure without echoing the path', async () => {
+  await assert.rejects(
+    CDP.connect('ws://127.0.0.1:1/devtools/browser/secret-session-id', 2000),
+    (error) => {
+      assert.match(error.message, /Could not connect to CDP endpoint ws:\/\/127\.0\.0\.1:1 \(socket /);
+      assert.doesNotMatch(error.message, /secret-session-id/);
+      return true;
+    },
+  );
+});
