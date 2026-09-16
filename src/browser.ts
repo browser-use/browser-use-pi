@@ -284,7 +284,16 @@ async function launchLocalBrowser(options: LocalBrowserOptions): Promise<Browser
             relaunch: async () => {
               // The browser is already gone; a failed cleanup must not block its replacement.
               await close().catch(() => {});
-              return launchLocalBrowser(options);
+              try {
+                return await launchLocalBrowser(options);
+              } catch (error) {
+                // A profile the dying Chrome still holds can refuse the first launch, so retry
+                // once and keep the first error, which describes the original problem.
+                await delay(500);
+                return await launchLocalBrowser(options).catch(() => {
+                  throw error;
+                });
+              }
             },
           };
       } catch {}

@@ -268,16 +268,26 @@ export class BrowserRuntime {
     }
     await this.terminate();
     if (this.owned.size) {
-      let cdp: CDP;
-      try {
-        cdp = await CDP.connect(
-          this.config.endpoint,
-          this.config.operationTimeoutMs,
-          this.config.approveConnection,
-        );
-      } catch {
-        // The browser is already gone; its tabs went with it and nothing can be cleaned up.
-        // Closing a session must not fail just because the browser exited first.
+      // A browser that exited cannot be cleaned up, but a transient connect failure can: retry
+      // once, and only after a quick refusal so close() never spends a second full timeout on
+      // an endpoint that is not answering at all.
+      let cdp: CDP | undefined;
+      for (let attempt = 0; attempt < 2 && !cdp; attempt += 1) {
+        const startedAt = Date.now();
+        try {
+          cdp = await CDP.connect(
+            this.config.endpoint,
+            this.config.operationTimeoutMs,
+            this.config.approveConnection,
+          );
+        } catch {
+          if (attempt > 0 || Date.now() - startedAt > 1_000) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+      if (!cdp) {
+        // The browser is gone; its tabs went with it. Closing a session must not fail just
+        // because the browser exited first, so the cleanup is dropped rather than thrown.
         this.owned.clear();
         return;
       }
