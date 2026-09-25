@@ -1219,7 +1219,7 @@ export class AxHelpers {
     if (!Array.isArray(urls) || !urls.every((u) => typeof u === 'string'))
       throw new Error('map needs an array of URL strings.');
     const concurrency = Math.max(1, Math.min(options.concurrency ?? 6, 12));
-    const perHost = Math.max(1, options.perHost ?? 2);
+    const perHost = Math.max(1, options.perHost ?? 3);
     const minGap = options.minGapMs ?? 250;
     const retries = options.retries ?? 2;
     const timeoutMs = options.timeoutMs ?? 25000;
@@ -1263,7 +1263,7 @@ export class AxHelpers {
           const r =
             mode === 'fetch'
               ? await this.fetchOne(url, extract, timeoutMs)
-              : await this.tabOne(url, extract, timeoutMs);
+              : await this.tabOne(url, extract, timeoutMs, idle);
           if ((r.status === 429 || r.status === 503) && attempt < retries) {
             const wait = Math.min(30000, (r.retryAfter ?? 2 ** attempt * 2) * 1000);
             say(
@@ -1292,6 +1292,7 @@ export class AxHelpers {
         }
       }
     };
+    const idle: Page[] = []; // tabs are reused across URLs: opening and attaching a tab costs several round trips
     const flush = () =>
       writeFile(file, JSON.stringify(results.filter(Boolean), null, 1)).catch(() => {});
     const step = Math.max(1, Math.ceil(urls.length / 10));
@@ -1311,6 +1312,7 @@ export class AxHelpers {
         }
       }),
     );
+    await Promise.all(idle.map((page) => page.close().catch(() => {})));
     await flush();
     const failed = results.filter((r) => !r.ok);
     this.summarize(
@@ -1343,9 +1345,10 @@ export class AxHelpers {
     return { status: response.status, value, retryAfter };
   }
 
-  private async tabOne(url: string, extract: unknown, timeoutMs: number) {
-    const tabs = this.tabs();
-    const page = await tabs.open();
+  /** With `pool`, a tab is taken from and returned to it after success; a failed tab is closed. */
+  private async tabOne(url: string, extract: unknown, timeoutMs: number, pool?: Page[]) {
+    const page = pool?.pop() ?? (await this.tabs().open());
+    let ok = false;
     try {
       const nav = await Promise.race([
         page.cdp('Page.navigate', { url }),
@@ -1365,9 +1368,11 @@ export class AxHelpers {
           title: document.title,
           text: (document.body?.innerText ?? '').slice(0, 4000),
         }));
+      ok = true;
       return { status, value, retryAfter: undefined as number | undefined };
     } finally {
-      await page.close().catch(() => {});
+      if (ok && pool) pool.push(page);
+      else await page.close().catch(() => {});
     }
   }
 
