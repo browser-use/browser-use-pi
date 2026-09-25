@@ -142,10 +142,31 @@ export class Page {
     throw new Error(`Page condition exceeded ${timeoutMs} ms.`);
   }
   async snapshot(): Promise<{ url: string; title: string; nodes: AXNode[] }> {
-    const { nodes } = await this.cdp('Accessibility.getFullAXTree');
+    const [{ nodes }, info, { frameTree }] = await Promise.all([
+      this.cdp('Accessibility.getFullAXTree'),
+      this.info(),
+      this.cdp('Page.getFrameTree'),
+    ]);
+    // Same-origin iframes render in this process but are missing from the main frame's AX tree.
+    const frames: string[] = [];
+    const walk = (tree: Protocol.Page.FrameTree) =>
+      tree.childFrames?.forEach((child) => {
+        if (child.frame.securityOrigin === frameTree.frame.securityOrigin)
+          frames.push(child.frame.id);
+        walk(child);
+      });
+    walk(frameTree);
+    const inner = await Promise.all(
+      frames.map((frameId) =>
+        this.cdp('Accessibility.getFullAXTree', { frameId }).then(
+          (r) => r.nodes,
+          () => [],
+        ),
+      ),
+    );
     return {
-      ...(await this.info()),
-      nodes: nodes
+      ...info,
+      nodes: [...nodes, ...inner.flat()]
         .filter((n) => !n.ignored && n.backendDOMNodeId)
         .map((n) => ({
           id: n.backendDOMNodeId!,
