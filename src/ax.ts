@@ -81,8 +81,11 @@ const KEYS: Record<string, { code: string; key: string; keyCode: number; text?: 
   PageDown: { code: 'PageDown', key: 'PageDown', keyCode: 34 },
   Backspace: { code: 'Backspace', key: 'Backspace', keyCode: 8 },
 };
+// Accents are folded so "Zurich" names "Zürich"; everything else must still match exactly.
 const norm = (s: unknown) =>
   String(s ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
     .trim()
     .replace(/\s+/g, ' ')
     .toLowerCase();
@@ -110,6 +113,7 @@ Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw
 - Work longer than ~2 minutes: const id = bu.job('name', async progress => {...}); then await bu.wait(id) blocks up to 150 s, prints progress and returns {done, value}. Never poll with sleep loops or "alive" prints.
 - NEVER write blind sleeps (setTimeout/new Promise delays/sleep) to wait for pages. Actions already settle. For a specific condition use await bu.waitForText('Results') or await page.waitFor(predicate).
 - Inspect only when the next step depends on content you have not seen. Checkpoint deliverables as you go.
+- Result pages: read rows with bu.list() or bu.read() (row names often carry prices and times); if the page says it is loading or fetching, bu.waitForText the result, then read again before concluding.
 - When the deliverables are ready, write all files in one javascript call and call finish or finish_from_js in that same response; do not spend a separate turn re-reading files you just wrote.
 - Timestamps: every bu line shows the UTC time it observed the page ('at ...Z'). Use those printed times for observation and access times in deliverables. Never generate, backfill or guess times or dates: new Date() at the end of the work is not an observation time.
 `;
@@ -258,10 +262,17 @@ export class AxHelpers {
       (n) => CONTROLS.has(n.role) && (n.name || n.value !== undefined || n.role !== 'link'),
     );
     const seen = new Set<string>();
-    const controls = all.filter((n) => {
-      const key = `${n.role}|${n.name}|${n.value ?? ''}`;
-      return seen.has(key) ? false : (seen.add(key), true);
-    });
+    // Fields and open menus first, the rest in page order: page chrome must not push the form past the cutoff.
+    const rank = (n: AXNode) =>
+      ROLES.fill.has(n.role) || n.expanded || n.role === 'option' ? 0 : 1;
+    const controls = all
+      .filter((n) => {
+        const key = `${n.role}|${n.name}|${n.value ?? ''}`;
+        return seen.has(key) ? false : (seen.add(key), true);
+      })
+      .map((n, i) => ({ n, i }))
+      .sort((a, b) => rank(a.n) - rank(b.n) || a.i - b.i)
+      .map(({ n }) => n);
     const max = options.max ?? 60;
     const textParts: string[] = [];
     let size = 0;
@@ -312,6 +323,9 @@ export class AxHelpers {
     const usable = snap.nodes.filter((n) => roles.has(n.role));
     let matches: AXNode[];
     let label: string;
+    // Models often pass an id as '1743' or '#1743'.
+    if (typeof target === 'string' && /^#?\d+$/.test(target.trim()))
+      target = Number(target.trim().replace('#', ''));
     if (typeof target === 'number') {
       matches = snap.nodes.filter((n) => n.id === target);
       label = `#${target}`;
@@ -554,7 +568,7 @@ export class AxHelpers {
               return a ? (a.isContentEditable ? a.innerText : (a.value ?? '')) : '';
             })
       ).catch(() => undefined);
-      const picked = options.pick ? await this.pickOption(page, text, options.pick) : undefined;
+      const picked = options.pick ? await this.pickOption(page, options.pick, text) : undefined;
       if (options.enter && !picked) await this.key(page, 'Enter');
       const mismatch = actual !== undefined && actual !== text && !options.enter;
       return {
@@ -565,7 +579,7 @@ export class AxHelpers {
   }
 
   /** After typing into an autocomplete, click the suggestion with this exact name or unique name prefix. */
-  private async pickOption(page: Page, typed: string, want: string) {
+  private async pickOption(page: Page, want: string, typed?: string) {
     const deadline = Date.now() + 4000;
     for (;;) {
       const options = (await this.nodes(page)).nodes.filter(
@@ -584,7 +598,7 @@ export class AxHelpers {
       }
       if (Date.now() > deadline)
         throw new Error(
-          `PICK_NOT_FOUND: typed ${JSON.stringify(typed)} but no suggestion named "${want}". Suggestions: ${
+          `PICK_NOT_FOUND: ${typed === undefined ? 'opened it' : `typed ${JSON.stringify(typed)}`} but no option named "${want}". Options: ${
             options
               .filter((n) => n.role === 'option')
               .slice(0, 8)
@@ -600,11 +614,23 @@ export class AxHelpers {
     return this.act('select', target, async () => {
       const { page, node } = await this.resolve('select', target);
       const entry = this.history.at(-1)!;
+      const native = await this.onNode<boolean>(
+        page,
+        node.id,
+        `function(){return this.tagName==='SELECT';}`,
+      );
+      if (!native) {
+        // Custom dropdowns (role=combobox/listbox): open it with a real click, then click the option by name.
+        const p = await this.point(page, node.id);
+        entry.status = 'attempted';
+        await page.clickAt(p.x, p.y);
+        const picked = await this.pickOption(page, option);
+        return { id: node.id, detail: `"${clip(node.name, 40)}" -> picked ${picked}` };
+      }
       const result = await this.onNode<string>(
         page,
         node.id,
         `function(label){
-          if (this.tagName !== 'SELECT') throw Error('Not a native <select>: click it, then click the option by name');
           const norm = s => String(s).trim().replace(/\\s+/g,' ').toLowerCase();
           const opts = [...this.options].filter(o => !o.disabled);
           const hits = opts.filter(o => norm(o.label) === norm(label) || norm(o.value) === norm(label));
