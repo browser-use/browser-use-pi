@@ -97,6 +97,10 @@ const isContextLoss = (e: unknown) =>
     String(e instanceof Error ? e.message : e),
   );
 
+/** A final result that admits the task is not done ("could not", "blocked", "no results"). */
+export const GAVE_UP =
+  /\b(could ?n[o'’]t|can ?n[o'’]t|cannot|unable to|(?:was|were) not able|not (?:be )?verified|blocked|did not (?:display|show|load|return)|no (?:matching |relevant )?results)\b/i;
+
 /** Appended to the system prompt when the `bu` helpers are enabled. */
 export const AX_PROMPT = `
 

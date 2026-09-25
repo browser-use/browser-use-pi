@@ -15,7 +15,7 @@ import { researchTools } from './research-tools.js';
 import type { BrowserUseOptions, RunOptions, RunResult, StopReason } from './types.js';
 import { redact } from './history.js';
 import { SYSTEM_PROMPT } from './prompt.js';
-import { AX_PROMPT } from './ax.js';
+import { AX_PROMPT, GAVE_UP } from './ax.js';
 import { positiveInteger } from './protocol.js';
 import { bounded, type RunControl } from './control.js';
 
@@ -71,6 +71,7 @@ export async function runAgent(
   const hookTimeout = config.hookTimeoutMs ?? 30_000;
   let steps = 0;
   let finishRepairs = 0;
+  let retried = false;
   let providerRetries = 0;
   let retriedUsage = zeroUsage();
   let finalizing = false;
@@ -127,6 +128,13 @@ export async function runAgent(
       throw new Error(
         `Final result does not match schema: ${JSON.stringify(Errors(schema, output).slice(0, 5)).slice(0, 2000)}`,
       );
+    // Fast models report failure after one route; while budget remains, send the first such result back once.
+    if (config.semantic && !retried && !finalizing && GAVE_UP.test(JSON.stringify(output) ?? '')) {
+      retried = true;
+      throw new Error(
+        "Result rejected: it reports the task as not done, and budget remains. Try at least one genuinely different route first: a direct URL with the query, the site's other search or listing pages, the underlying data request, or another official source for the same facts. Never guess or fabricate. If that also fails, finish with the same honest report.",
+      );
+    }
     if (config.validateResult) {
       const feedback = await bounded(
         () => config.validateResult!(output, signal),
