@@ -19,6 +19,10 @@ import { AX_PROMPT, GAVE_UP } from './ax.js';
 import { positiveInteger } from './protocol.js';
 import { bounded, type RunControl } from './control.js';
 
+// The stated budget sets how much work the model plans; the full limits stay as a safety net.
+const BUDGET_MINUTES = 7;
+const BUDGET_TURNS = 12;
+
 export const zeroUsage = (): Usage => ({
   input: 0,
   output: 0,
@@ -229,7 +233,7 @@ export async function runAgent(
     initialState: {
       model,
       messages: session?.messages ?? [],
-      systemPrompt: `${SYSTEM_PROMPT}${config.semantic ? `${AX_PROMPT}- Budget for this task: ${Math.round(timeoutMs / 60000)} minutes and ${maxSteps} turns. Hard lookups usually take many searches and page reads; spend the budget before concluding that something cannot be found. Never pad a list or fill a field to reach a requested count; report the shortfall.\n` : ''}\nWorkspace directory (JSON string): ${JSON.stringify(workspace)}. Relative file-tool paths and the JavaScript working directory start here. Save deliverables inside this directory; files outside it are not included by BrowserUse.files(). Use relative paths or the exact workspace value, not a guessed parent directory.\n${journalGuidance}${config.sensitiveData ? `Named secrets (values withheld): ${JSON.stringify(Object.fromEntries(Object.entries(config.sensitiveData).map(([name, entry]) => [name, entry.domains])))}. Use await fillSecret(name, backendNodeId, page) on an input found in the AX tree. Never read back, print or save credentials.\n` : ''}${config.instructions ?? ''}`,
+      systemPrompt: `${SYSTEM_PROMPT}${config.semantic ? `${AX_PROMPT}- Budget for this task: ${Math.min(Math.round(timeoutMs / 60000), BUDGET_MINUTES)} minutes and ${Math.min(maxSteps, BUDGET_TURNS)} turns. Hard lookups usually take many searches and page reads; spend the budget before concluding that something cannot be found. Never pad a list or fill a field to reach a requested count; report the shortfall.\n` : ''}\nWorkspace directory (JSON string): ${JSON.stringify(workspace)}. Relative file-tool paths and the JavaScript working directory start here. Save deliverables inside this directory; files outside it are not included by BrowserUse.files(). Use relative paths or the exact workspace value, not a guessed parent directory.\n${journalGuidance}${config.sensitiveData ? `Named secrets (values withheld): ${JSON.stringify(Object.fromEntries(Object.entries(config.sensitiveData).map(([name, entry]) => [name, entry.domains])))}. Use await fillSecret(name, backendNodeId, page) on an input found in the AX tree. Never read back, print or save credentials.\n` : ''}${config.instructions ?? ''}`,
       thinkingLevel: config.reasoning ?? 'medium',
       tools: [
         javascript,
