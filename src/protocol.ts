@@ -23,6 +23,7 @@ export interface CellResult {
   outputFile?: string;
 }
 export interface WorkerConfig extends importPolicy {
+  semantic?: boolean;
   sensitiveData?: import('./policy.js').SensitiveData;
   redact?: string[];
   endpoint: string;

@@ -82,6 +82,8 @@ export class BrowserUse {
       throw new Error('highlightActions must be boolean.');
     if (options.researchTools !== undefined && typeof options.researchTools !== 'boolean')
       throw new Error('researchTools must be boolean.');
+    if (options.semantic !== undefined && typeof options.semantic !== 'boolean')
+      throw new Error('semantic must be boolean.');
     if (options.recording && typeof options.recording === 'object') {
       positiveInteger('recording.intervalMs', options.recording.intervalMs ?? 750);
       positiveInteger('recording.maxFrames', options.recording.maxFrames ?? 400);
@@ -140,6 +142,7 @@ export class BrowserUse {
     const browser = await openBrowser(options.browser);
     const runtime = new BrowserRuntime(
       {
+        semantic: !!options.semantic,
         endpoint: browser.endpoint,
         ...(options.allowedDomains !== undefined ? { allowedDomains: options.allowedDomains } : {}),
         ...(options.prohibitedDomains !== undefined
