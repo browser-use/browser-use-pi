@@ -105,12 +105,32 @@ const isContextLoss = (e: unknown) =>
 export const GAVE_UP =
   /\b(could ?n[o'’]t|can ?n[o'’]t|cannot|unable to|(?:was|were) not able|not (?:be )?verified|blocked|did not (?:display|show|load|return)|no (?:matching |relevant )?results)\b/i;
 
+type SerpRow = { title: string; url: string; snippet: string };
+/** DuckDuckGo HTML result rows, run inside the results page. */
+const SERP = (): SerpRow[] =>
+  Array.from(document.querySelectorAll('.result:not(.result--ad)'))
+    .map((r) => {
+      const a = r.querySelector('a.result__a');
+      const link = new URL(a?.getAttribute('href') ?? '', location.href);
+      return {
+        title: a?.textContent?.trim() ?? '',
+        url: link.searchParams.get('uddg') ?? link.href,
+        snippet: r.querySelector('.result__snippet')?.textContent?.trim() ?? '',
+      };
+    })
+    .filter((r) => r.title)
+    .slice(0, 10);
+
+/** A value its bu call already printed: the REPL's echo of it becomes a one-line note instead of a second copy. */
+const printed = <T extends object>(value: T, note: string): T =>
+  Object.defineProperty(value, Symbol.for('nodejs.util.inspect.custom'), { value: () => note });
+
 /** Appended to the system prompt when the `bu` helpers are enabled. */
 export const AX_PROMPT = `
 
 Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
-- Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically, so you rarely need a separate look.
-- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones.
+- Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically unless the cell already looked (state/find/read/table/list/links), so you rarely need a separate look.
+- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones; await bu.upload(t, 'name.txt', 'optional content') creates the file if needed and sets it on the file input (t is often "Choose File" or its id).
   t = a numeric id from bu.state()/bu.find(), the exact accessible name or a unique prefix of it, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
 - Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Don't press Enter on a suggestion list you have not seen.
 - Never construct opaque or encoded URL parameters (base64/protobuf tokens such as tfs=); use the site's controls or URLs you have observed.
@@ -118,7 +138,7 @@ Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw
 - JavaScript alert/confirm/prompt dialogs are accepted automatically; their text is printed as [dialog ...] after the action.
 - Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids.
 - Read without dumping HTML: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows as objects keyed by column headers; await bu.list(i?) -> [{text, links}]; await bu.links('filter') -> [{name,url}]. Each prints a count, fields and a sample.
-- Web search: await bu.search('exact words') -> [{title,url,snippet}] from DuckDuckGo in the current tab (Google shows captchas to automated browsers). Then open or bu.map the promising urls.
+- Web search: await bu.search('exact words') -> [{title,url,snippet}] from DuckDuckGo in the current tab (Google shows captchas to automated browsers). await bu.search(['query 1', 'query 2', ...]) runs up to 6 queries at once in background tabs -> {query: rows}; batch your query variants this way. Then open or bu.map the promising urls.
 - Many pages: const rows = await bu.map(urls, () => ({title: document.title, price: document.querySelector('.price')?.textContent}), {concurrency: 6}) opens pages in parallel background tabs with per-host politeness and 429 backoff; returns [{url, ok, status, value|error}] and saves partial results to the workspace. {mode:'fetch'} fetches over HTTP instead and calls extract(text, {url,status}) in Node. Never loop page.goto over many URLs.
 - Work longer than ~2 minutes: const id = bu.job('name', async progress => {...}); then await bu.wait(id) blocks up to 150 s, prints progress and returns {done, value}. Never poll with sleep loops or "alive" prints.
 - NEVER write blind sleeps (setTimeout/new Promise delays/sleep) to wait for pages. Actions already settle. For a specific condition use await bu.waitForText('Results') or await page.waitFor(predicate).
@@ -317,6 +337,7 @@ export class AxHelpers {
 
   /** Compact state: URL, title, interactive controls (ids usable as targets), visible text summary. */
   async state(options: { max?: number; text?: number; print?: boolean } = {}) {
+    this.dirty = false; // a look after the last action replaces the automatic state print
     const [snap, visible] = await Promise.all([
       this.nodes(),
       this.visibleText().catch(() => undefined),
@@ -361,35 +382,44 @@ export class AxHelpers {
       this.log(
         `[state${this.at()}] ${result.title} | ${result.url}${this.flushDialogs()}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
       );
-    return result;
+    return options.print === false ? result : printed(result, '[state printed above]');
   }
 
   /** Web search in the current tab via DuckDuckGo's HTML page; Google answers automated browsers with captchas. */
-  async search(query: string, options: { max?: number } = {}) {
-    await this.goto(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`);
+  async search(query: string | string[]) {
+    const url = (q: string) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+    if (Array.isArray(query)) {
+      // Each query in its own background tab, all at once; the current tab stays where it is.
+      const rows = await Promise.all(
+        query.slice(0, 6).map((q) =>
+          this.tabOne(url(q), SERP, 25000).then(
+            (r) => r.value as SerpRow[],
+            () => [],
+          ),
+        ),
+      );
+      const out = Object.fromEntries(query.slice(0, 6).map((q, i) => [q, rows[i]!]));
+      for (const [q, r] of Object.entries(out)) this.logSerp(q, r);
+      return printed(out, '[search results printed above]');
+    }
+    await this.goto(url(query));
     this.dirty = false; // the results are returned; a state dump of the search page is noise
-    const rows = await this.page().evaluate(
-      (max: number) =>
-        Array.from(document.querySelectorAll('.result:not(.result--ad)'))
-          .map((r) => {
-            const a = r.querySelector('a.result__a');
-            const link = new URL(a?.getAttribute('href') ?? '', location.href);
-            return {
-              title: a?.textContent?.trim() ?? '',
-              url: link.searchParams.get('uddg') ?? link.href,
-              snippet: r.querySelector('.result__snippet')?.textContent?.trim() ?? '',
-            };
-          })
-          .filter((r) => r.title)
-          .slice(0, max),
-      options.max ?? 10,
+    const rows = await this.page().evaluate(SERP);
+    this.logSerp(query, rows);
+    return printed(rows, '[search results printed above]');
+  }
+
+  private logSerp(query: string, rows: SerpRow[]) {
+    this.log(
+      `[search ${JSON.stringify(query)}${this.at()}] ${rows.length} result(s)\n${rows
+        .map((r, i) => `${i + 1}. ${clip(r.title, 90)} | ${r.url} | ${clip(r.snippet, 150)}`)
+        .join('\n')}`,
     );
-    this.summarize('search', rows);
-    return rows;
   }
 
   /** Controls whose name/value contains the query (case-insensitive). Read-only. */
   async find(query: string, options: { role?: string; max?: number } = {}) {
+    this.dirty = false;
     const q = norm(query);
     const snap = await this.nodes();
     const hits = snap.nodes
@@ -599,6 +629,29 @@ export class AxHelpers {
         for (const type of ['mousePressed', 'mouseReleased'] as const)
           await page.cdp('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button, clickCount });
       return { id: node.id, detail: `${node.role} "${clip(node.name, 50)}"` };
+    });
+  }
+
+  /** Create `name` in the workspace if missing and set it on a file input (its AX node is the input). */
+  async upload(target: Target, name: string, content = 'Test file created for this form.\n') {
+    return this.act('upload', target, async () => {
+      const { page, node } = await this.resolve('click', target);
+      const path = join(this.workspace, name);
+      await writeFile(path, content, { flag: 'wx' }).catch((e: NodeJS.ErrnoException) => {
+        if (e.code !== 'EEXIST') throw e;
+      });
+      this.history.at(-1)!.status = 'attempted';
+      await page.cdp('DOM.setFileInputFiles', { backendNodeId: node.id, files: [path] });
+      const files = await this.onNode<number>(
+        page,
+        node.id,
+        `function(){return this.files?.length ?? -1;}`,
+      );
+      if (files < 1)
+        throw new Error(
+          `#${node.id} is not a file input (files: ${files}); pass the file input's id`,
+        );
+      return { id: node.id, detail: `${node.role} "${clip(node.name, 40)}" = ${name}` };
     });
   }
 
@@ -937,6 +990,7 @@ export class AxHelpers {
 
   /** Readable text lines of the page or of one region (landmark/dialog/form/article/section name or role). */
   async read(region?: string, options: { max?: number } = {}) {
+    this.dirty = false;
     const { nodes, byId, info } = await this.tree();
     let root = nodes[0];
     if (region) {
@@ -1031,6 +1085,7 @@ export class AxHelpers {
 
   /** Table/grid rows as objects keyed by column headers (arrays when no headers). */
   async table(which?: number | string) {
+    this.dirty = false;
     const { nodes, byId } = await this.tree();
     const found = this.pick(nodes, new Set(['table', 'grid', 'treegrid']), which, byId);
     const tables = Array.isArray(found) ? found : found ? [found] : [];
@@ -1085,6 +1140,7 @@ export class AxHelpers {
 
   /** List items with their text and links. Default: the list with the most items. */
   async list(which?: number | string) {
+    this.dirty = false;
     const { nodes, byId } = await this.tree();
     const found = this.pick(nodes, new Set(['list', 'feed', 'listbox', 'tree']), which, byId);
     const lists = Array.isArray(found) ? found : found ? [found] : [];
@@ -1125,6 +1181,7 @@ export class AxHelpers {
 
   /** All links on the page, optionally filtered by name/url substring. */
   async links(filter?: string) {
+    this.dirty = false;
     const { nodes } = await this.tree();
     const f = filter ? norm(filter) : '';
     const seen = new Set<string>();
