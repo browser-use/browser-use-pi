@@ -1,0 +1,21 @@
+src/ax.ts
+  s_4bd8ed662096a6::t_82fed969813cd9 291
+src/page.ts
+  s_4bd8ed662096a6::t_25589ec0c7f50a 152-158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f42501c39b48e9a9d526d3b75e13880a89f45cab",
+  "prompts": {},
+  "sessions": {
+    "s_4bd8ed662096a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76a213b-b710-4a4b-84c9-44a9fd5fec43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
