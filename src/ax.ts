@@ -133,7 +133,7 @@ const printed = <T extends object>(value: T, note: string): T =>
 export const AX_PROMPT = `
 
 Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
-- Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically unless the cell already looked (state/find/read/table/list/links), so you rarely need a separate look.
+- Chain every action you already know into ONE javascript call. A whole form is one call: await bu.fill('Email *', 'ada@example.com'); await bu.select('Country *', 'Canada'); await bu.check('I agree to the terms', true); await bu.upload('Choose File', 'cv.txt', 'CV of Ada'); await bu.click('Submit'); await bu.waitForText('success'). Research is one call per round: const r = await bu.search(['query a', 'query b']); const pages = await bu.map(Object.values(r).flat().slice(0, 4).map((x) => x.url), () => document.body.innerText.slice(0, 3000)); pages.forEach((p) => console.log(p.url, p.value)). Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically unless the cell already looked (state/find/read/table/list/links), so you rarely need a separate look.
 - Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones; await bu.upload(t, 'name.txt', 'content') writes that workspace file (omit content to use an existing one) and sets it on the file input (t is often "Choose File" or its id).
   t = a numeric id from bu.state()/bu.find(), the exact accessible name or a unique prefix of it, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
 - Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Don't press Enter on a suggestion list you have not seen.
@@ -301,10 +301,33 @@ export class AxHelpers {
     for (let i = 0; ; i++) {
       try {
         const started = Date.now();
-        const [{ nodes }, info] = await Promise.all([
+        const [{ nodes: top }, info, { frameTree }] = await Promise.all([
           page.cdp('Accessibility.getFullAXTree'),
           page.info(),
+          page.cdp('Page.getFrameTree'),
         ]);
+        // A form that lives in a same-origin iframe is missing from the main frame's AX tree. Only a page without its
+        // own fields gets the frames' trees, and only frames that hold fields: ads and embeds would bloat every state.
+        const frames: string[] = [];
+        const walk = (tree: typeof frameTree) =>
+          tree.childFrames?.forEach((child) => {
+            if (child.frame.securityOrigin === frameTree.frame.securityOrigin)
+              frames.push(child.frame.id);
+            walk(child);
+          });
+        if (!top.some((n) => ROLES.fill.has(String(n.role?.value)))) walk(frameTree);
+        const inner = await Promise.all(
+          frames.map((frameId) =>
+            page.cdp('Accessibility.getFullAXTree', { frameId }).then(
+              (r) => r.nodes,
+              () => [],
+            ),
+          ),
+        );
+        const nodes = [
+          ...top,
+          ...inner.filter((f) => f.some((n) => ROLES.fill.has(String(n.role?.value)))).flat(),
+        ];
         this.snapshotMs = Date.now() - started;
         // A focusable contenteditable element is a text field that Chrome reports as generic.
         const editable = new Set(
@@ -343,8 +366,10 @@ export class AxHelpers {
           NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
         );
         for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-          if (n instanceof Element) {
-            if (n.shadowRoot) roots.push(n.shadowRoot);
+          if (n.nodeType === Node.ELEMENT_NODE) {
+            const el = n as Element & { contentDocument?: Document | null };
+            if (el.shadowRoot) roots.push(el.shadowRoot);
+            if (el.contentDocument) roots.push(el.contentDocument); // same-origin iframe
             continue;
           }
           const e = n.parentElement;
@@ -548,7 +573,14 @@ export class AxHelpers {
         const textField = (n) => n && (['INPUT','TEXTAREA'].includes(n.tagName) || n.isContentEditable);
         if (!e.contains(hit) && !(hit && hit.contains(e) && getComputedStyle(hit).pointerEvents !== 'none' && hit.tagName === 'LABEL') && !(editableCover && textField(e) && textField(hit)))
           throw Error('Target covered by ' + (hit ? hit.tagName.toLowerCase() + (hit.id ? '#' + hit.id : '') + (hit.className && typeof hit.className === 'string' ? '.' + hit.className.split(' ')[0] : '') : 'nothing'));
-        return {x, y, tag: e.tagName, type: e.type || '', editable: textField(e)};
+        // Inside same-origin iframes, add each frame's content-box offset to get top-level viewport coordinates.
+        let px = x, py = y;
+        for (let w = e.ownerDocument.defaultView; w && w.frameElement; w = w.parent) {
+          const f = w.frameElement, fr = f.getBoundingClientRect(), cs = getComputedStyle(f);
+          px += fr.x + f.clientLeft + parseFloat(cs.paddingLeft);
+          py += fr.y + f.clientTop + parseFloat(cs.paddingTop);
+        }
+        return {x: px, y: py, tag: e.tagName, type: e.type || '', editable: textField(e)};
       }`,
       editableCover,
     );
