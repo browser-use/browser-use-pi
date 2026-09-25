@@ -71,7 +71,9 @@ export async function runAgent(
   const hookTimeout = config.hookTimeoutMs ?? 30_000;
   let steps = 0;
   let finishRepairs = 0;
-  let retried = false;
+  let cells = 0;
+  let rejections = 0;
+  let cellsAtRejection = 0;
   let providerRetries = 0;
   let retriedUsage = zeroUsage();
   let finalizing = false;
@@ -103,6 +105,7 @@ export async function runAgent(
     execute: async (_id, params: { code: string }, signal) => {
       let result;
       try {
+        cells++;
         result = await runtime.execute(params.code, config.cellTimeoutMs ?? 30_000, signal);
       } catch (error) {
         if (!(error instanceof CellError)) throw error;
@@ -128,11 +131,18 @@ export async function runAgent(
       throw new Error(
         `Final result does not match schema: ${JSON.stringify(Errors(schema, output).slice(0, 5)).slice(0, 2000)}`,
       );
-    // Fast models report failure after one route; while budget remains, send the first such result back once.
-    if (config.semantic && !retried && !finalizing && GAVE_UP.test(JSON.stringify(output) ?? '')) {
-      retried = true;
+    // Fast models report failure after one route and resubmit it unchanged; while budget remains, require a new attempt.
+    if (
+      config.semantic &&
+      !finalizing &&
+      rejections < 3 &&
+      (rejections === 0 || cells === cellsAtRejection) &&
+      GAVE_UP.test(JSON.stringify(output) ?? '')
+    ) {
+      rejections++;
+      cellsAtRejection = cells;
       throw new Error(
-        "Result rejected: it reports the task as not done, and budget remains. Try at least one genuinely different route first: a direct URL with the query, the site's other search or listing pages, the underlying data request, or another official source for the same facts. Never guess or fabricate. If that also fails, finish with the same honest report.",
+        "Result rejected: it reports the task as not done, and budget remains. Try at least one genuinely different route first: a direct URL with the query, the site's other search or listing pages, the underlying data request, or another official source for the same facts. Never guess or fabricate. If that also fails, finish with an honest report; resubmitting without a new attempt is rejected.",
       );
     }
     if (config.validateResult) {
