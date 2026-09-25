@@ -126,7 +126,7 @@ export const AX_PROMPT = `
 
 Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
 - Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically unless the cell already looked (state/find/read/table/list/links), so you rarely need a separate look.
-- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones.
+- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones; await bu.upload(t, 'name.txt', 'optional content') creates the file if needed and sets it on the file input (t is often "Choose File" or its id).
   t = a numeric id from bu.state()/bu.find(), the exact accessible name or a unique prefix of it, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
 - Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Don't press Enter on a suggestion list you have not seen.
 - Never construct opaque or encoded URL parameters (base64/protobuf tokens such as tfs=); use the site's controls or URLs you have observed.
@@ -617,6 +617,29 @@ export class AxHelpers {
         for (const type of ['mousePressed', 'mouseReleased'] as const)
           await page.cdp('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button, clickCount });
       return { id: node.id, detail: `${node.role} "${clip(node.name, 50)}"` };
+    });
+  }
+
+  /** Create `name` in the workspace if missing and set it on a file input (its AX node is the input). */
+  async upload(target: Target, name: string, content = 'Test file created for this form.\n') {
+    return this.act('upload', target, async () => {
+      const { page, node } = await this.resolve('click', target);
+      const path = join(this.workspace, name);
+      await writeFile(path, content, { flag: 'wx' }).catch((e: NodeJS.ErrnoException) => {
+        if (e.code !== 'EEXIST') throw e;
+      });
+      this.history.at(-1)!.status = 'attempted';
+      await page.cdp('DOM.setFileInputFiles', { backendNodeId: node.id, files: [path] });
+      const files = await this.onNode<number>(
+        page,
+        node.id,
+        `function(){return this.files?.length ?? -1;}`,
+      );
+      if (files < 1)
+        throw new Error(
+          `#${node.id} is not a file input (files: ${files}); pass the file input's id`,
+        );
+      return { id: node.id, detail: `${node.role} "${clip(node.name, 40)}" = ${name}` };
     });
   }
 
