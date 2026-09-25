@@ -1,7 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AXNode, Page, Tabs } from './page.js';
+import { axNodes, type AXNode, type Page, type Tabs } from './page.js';
 import type { CDP } from './cdp.js';
 
 type Target = number | string | { name: string; role?: string };
@@ -89,7 +89,7 @@ const KEYS: Record<string, { code: string; key: string; keyCode: number; text?: 
 const norm = (s: unknown) =>
   String(s ?? '')
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .replace(/\s+/g, ' ')
     .toLowerCase();
@@ -101,14 +101,17 @@ const isContextLoss = (e: unknown) =>
     String(e instanceof Error ? e.message : e),
   );
 
-/** A final result that admits the task is not done ("could not", "blocked", "no results"). */
+/** A first-person give-up ("I could not…", "Unable to find…"), not a negative finding ("returns no results"). */
 export const GAVE_UP =
-  /\b(could ?n[o'’]t|can ?n[o'’]t|cannot|unable to|(?:was|were) not able|not (?:be )?verified|blocked|did not (?:display|show|load|return)|no (?:matching |relevant )?results)\b/i;
+  /\b(I (?:could ?n[o'’]t|can ?n[o'’]t|cannot|was(?: not|n[o'’]t) able to)|unable to (?:find|access|complete|locate|verify|identify|determine))\b/i;
 
 type SerpRow = { title: string; url: string; snippet: string };
 /** DuckDuckGo HTML result rows, run inside the results page. */
-const SERP = (): SerpRow[] =>
-  Array.from(document.querySelectorAll('.result:not(.result--ad)'))
+const SERP = (): SerpRow[] => {
+  // DuckDuckGo answers suspected bots with a challenge page (HTTP 202) and no results.
+  if (document.querySelector('.anomaly-modal, form.challenge-form'))
+    throw new Error('SEARCH_BLOCKED: DuckDuckGo showed a bot challenge');
+  return Array.from(document.querySelectorAll('.result:not(.result--ad)'))
     .map((r) => {
       const a = r.querySelector('a.result__a');
       const link = new URL(a?.getAttribute('href') ?? '', location.href);
@@ -120,6 +123,7 @@ const SERP = (): SerpRow[] =>
     })
     .filter((r) => r.title)
     .slice(0, 10);
+};
 
 /** A value its bu call already printed: the REPL's echo of it becomes a one-line note instead of a second copy. */
 const printed = <T extends object>(value: T, note: string): T =>
@@ -130,33 +134,28 @@ export const AX_PROMPT = `
 
 Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
 - Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically unless the cell already looked (state/find/read/table/list/links), so you rarely need a separate look.
-- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones; await bu.upload(t, 'name.txt', 'optional content') creates the file if needed and sets it on the file input (t is often "Choose File" or its id).
+- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones; await bu.upload(t, 'name.txt', 'content') writes that workspace file (omit content to use an existing one) and sets it on the file input (t is often "Choose File" or its id).
   t = a numeric id from bu.state()/bu.find(), the exact accessible name or a unique prefix of it, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
 - Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Don't press Enter on a suggestion list you have not seen.
-- Never construct opaque or encoded URL parameters (base64/protobuf tokens such as tfs=); use the site's controls or URLs you have observed.
+- Never construct opaque or encoded URL parameters (base64/protobuf tokens); use the site's controls or URLs you have observed.
 - If an interaction fails, try one different route (ids from bu.find, another control, keyboard) before reporting that you are blocked.
 - JavaScript alert/confirm/prompt dialogs are accepted automatically; their text is printed as [dialog ...] after the action.
 - Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids.
 - Read without dumping HTML: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows as objects keyed by column headers; await bu.list(i?) -> [{text, links}]; await bu.links('filter') -> [{name,url}]. Each prints a count, fields and a sample.
-- Web search: await bu.search('exact words') -> [{title,url,snippet}] from DuckDuckGo in the current tab (Google shows captchas to automated browsers). await bu.search(['query 1', 'query 2', ...]) runs up to 6 queries at once in background tabs -> {query: rows}; batch your query variants this way. Then open or bu.map the promising urls.
+- Web search: await bu.search('exact words') -> [{title,url,snippet}] from DuckDuckGo in a background tab (Google shows captchas to automated browsers). await bu.search(['query 1', 'query 2', ...]) runs up to 6 queries at once -> {query: rows}; batch your query variants this way. Then open or bu.map the promising urls.
 - Many pages: const rows = await bu.map(urls, () => ({title: document.title, price: document.querySelector('.price')?.textContent}), {concurrency: 6}) opens pages in parallel background tabs with per-host politeness and 429 backoff; returns [{url, ok, status, value|error}] and saves partial results to the workspace. {mode:'fetch'} fetches over HTTP instead and calls extract(text, {url,status}) in Node. Never loop page.goto over many URLs.
 - Work longer than ~2 minutes: const id = bu.job('name', async progress => {...}); then await bu.wait(id) blocks up to 150 s, prints progress and returns {done, value}. Never poll with sleep loops or "alive" prints.
 - NEVER write blind sleeps (setTimeout/new Promise delays/sleep) to wait for pages. Actions already settle. For a specific condition use await bu.waitForText('Results') or await page.waitFor(predicate).
-- Inspect only when the next step depends on content you have not seen. Checkpoint deliverables as you go.
-- Result pages: read rows with bu.list() or bu.read() (row names often carry prices and times); if the page says it is loading or fetching, bu.waitForText the result, then read again before concluding.
+- Inspect only when the next step depends on content you have not seen.
+- Result pages: read rows with bu.list() or bu.read(); if the page says it is loading or fetching, bu.waitForText the result, then read again before concluding.
 - When the deliverables are ready, write all files in one javascript call and call finish or finish_from_js in that same response; do not spend a separate turn re-reading files you just wrote.
 - Timestamps: every bu line shows the UTC time it observed the page ('at ...Z'). Use those printed times for observation and access times in deliverables. Never generate, backfill or guess times or dates: new Date() at the end of the work is not an observation time.
 `;
 
 /** Fast, strict accessibility-tree helpers for the persistent REPL. Raw page/CDP stays available. */
 export class AxHelpers {
-  readonly history: {
-    op: string;
-    target: unknown;
-    status: string;
-    id?: number | undefined;
-    ms?: number;
-  }[] = [];
+  /** Set by an action once its input reached the page, so a failure after that is reported as uncertain. */
+  private attempted = false;
   /** Set by mutations; the worker prints a fresh compact state after such a cell. */
   dirty = false;
   private busy = false;
@@ -212,6 +211,13 @@ export class AxHelpers {
               session,
             )
             .catch(() => {});
+          return;
+        }
+        if (method === 'Target.detachedFromTarget') {
+          const gone = (raw as { sessionId: string }).sessionId;
+          this.inflight.delete(gone);
+          this.lastNet.delete(gone);
+          this.tracked.delete(gone);
           return;
         }
         if (!session || !method.startsWith('Network.')) return;
@@ -295,9 +301,26 @@ export class AxHelpers {
     for (let i = 0; ; i++) {
       try {
         const started = Date.now();
-        const snap = await page.snapshot();
+        const [{ nodes }, info] = await Promise.all([
+          page.cdp('Accessibility.getFullAXTree'),
+          page.info(),
+        ]);
         this.snapshotMs = Date.now() - started;
-        return snap;
+        // A focusable contenteditable element is a text field that Chrome reports as generic.
+        const editable = new Set(
+          nodes
+            .filter(
+              (n) =>
+                n.role?.value === 'generic' &&
+                n.properties?.some((p) => p.name === 'editable') &&
+                n.properties.some((p) => p.name === 'focusable' && p.value.value),
+            )
+            .map((n) => n.backendDOMNodeId),
+        );
+        return {
+          ...info,
+          nodes: axNodes(nodes).map((n) => (editable.has(n.id) ? { ...n, role: 'textbox' } : n)),
+        };
       } catch (error) {
         if (i >= 20 || !isContextLoss(error)) throw error;
         await delay(50);
@@ -336,7 +359,7 @@ export class AxHelpers {
   }
 
   /** Compact state: URL, title, interactive controls (ids usable as targets), visible text summary. */
-  async state(options: { max?: number; text?: number; print?: boolean } = {}) {
+  async state(options: { max?: number; text?: number } = {}) {
     this.dirty = false; // a look after the last action replaces the automatic state print
     const [snap, visible] = await Promise.all([
       this.nodes(),
@@ -378,35 +401,33 @@ export class AxHelpers {
       more: Math.max(0, controls.length - max),
       text: clip(textParts.join('\n'), limit),
     };
-    if (options.print !== false)
-      this.log(
-        `[state${this.at()}] ${result.title} | ${result.url}${this.flushDialogs()}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
-      );
-    return options.print === false ? result : printed(result, '[state printed above]');
+    this.log(
+      `[state${this.at()}] ${result.title} | ${result.url}${this.flushDialogs()}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
+    );
+    return printed(result, '[state printed above]');
   }
 
-  /** Web search in the current tab via DuckDuckGo's HTML page; Google answers automated browsers with captchas. */
+  /** Web search via DuckDuckGo's HTML page in background tabs; Google answers automated browsers with captchas. */
   async search(query: string | string[]) {
+    const queries = Array.isArray(query) ? query : [query];
+    if (queries.length > 6) throw new Error('bu.search takes at most 6 queries per call.');
     const url = (q: string) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
-    if (Array.isArray(query)) {
-      // Each query in its own background tab, all at once; the current tab stays where it is.
-      const rows = await Promise.all(
-        query.slice(0, 6).map((q) =>
-          this.tabOne(url(q), SERP, 25000).then(
-            (r) => r.value as SerpRow[],
-            () => [],
-          ),
-        ),
-      );
-      const out = Object.fromEntries(query.slice(0, 6).map((q, i) => [q, rows[i]!]));
-      for (const [q, r] of Object.entries(out)) this.logSerp(q, r);
-      return printed(out, '[search results printed above]');
-    }
-    await this.goto(url(query));
-    this.dirty = false; // the results are returned; a state dump of the search page is noise
-    const rows = await this.page().evaluate(SERP);
-    this.logSerp(query, rows);
-    return printed(rows, '[search results printed above]');
+    const { results } = await this.crawl(
+      queries.map(url),
+      SERP,
+      { perHost: 1, minGapMs: 500 },
+      () => {},
+    );
+    if (results.every((r) => !r.ok)) throw new Error(results[0]?.error ?? 'search failed');
+    const rows = results.map((r, i) => {
+      if (!r.ok) this.log(`[search ${JSON.stringify(queries[i])}] failed: ${r.error}`);
+      else this.logSerp(queries[i]!, (r.value as SerpRow[]).slice(0, queries.length > 1 ? 5 : 10));
+      return (r.value ?? []) as SerpRow[];
+    });
+    const out = Array.isArray(query)
+      ? Object.fromEntries(queries.map((q, i) => [q, rows[i]!]))
+      : rows[0]!;
+    return printed(out, '[search results printed above]');
   }
 
   private logSerp(query: string, rows: SerpRow[]) {
@@ -418,16 +439,12 @@ export class AxHelpers {
   }
 
   /** Controls whose name/value contains the query (case-insensitive). Read-only. */
-  async find(query: string, options: { role?: string; max?: number } = {}) {
+  async find(query: string, options: { max?: number } = {}) {
     this.dirty = false;
     const q = norm(query);
     const snap = await this.nodes();
     const hits = snap.nodes
-      .filter(
-        (n) =>
-          (CONTROLS.has(n.role) || n.role === 'StaticText' || n.role === 'heading') &&
-          (!options.role || n.role === options.role),
-      )
+      .filter((n) => CONTROLS.has(n.role) || n.role === 'StaticText' || n.role === 'heading')
       .filter((n) => norm(n.name).includes(q) || norm(n.value).includes(q))
       .slice(0, options.max ?? 25);
     this.log(`[find "${query}"${this.at()}] ${hits.length} hit(s)\n${hits.map(brief).join('\n')}`);
@@ -548,20 +565,15 @@ export class AxHelpers {
   ) {
     if (this.busy) throw new Error('Await bu actions sequentially; no concurrent mutations.');
     this.busy = true;
-    const started = Date.now();
-    const entry: (typeof this.history)[number] = { op, target, status: 'resolving' };
-    this.history.push(entry);
+    this.attempted = false;
     try {
       await this.trackNetwork(this.page()).catch(() => {});
       const { id, detail, value } = await body();
-      entry.id = id;
-      entry.status = 'completed';
       this.dirty = true;
       const settled = await this.settle();
       const info = await this.page()
         .info()
         .catch(() => ({ url: '?', title: '?' }));
-      entry.ms = Date.now() - started;
       this.log(
         `[ok${this.at()}] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}${this.flushDialogs()}`,
       );
@@ -575,10 +587,11 @@ export class AxHelpers {
         ...(value !== undefined ? { value } : {}),
       };
     } catch (error) {
-      entry.status = entry.status === 'attempted' ? 'uncertain' : 'not_executed';
-      if (entry.status === 'uncertain') this.dirty = true;
+      if (this.attempted) this.dirty = true;
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`${op} ${JSON.stringify(target)} failed (${entry.status}): ${message}`);
+      throw new Error(
+        `${op} ${JSON.stringify(target)} failed (${this.attempted ? 'uncertain' : 'not_executed'}): ${message}`,
+      );
     } finally {
       this.busy = false;
     }
@@ -621,8 +634,7 @@ export class AxHelpers {
     return this.act('click', target, async () => {
       const { page, node } = await this.resolve('click', target);
       const p = await this.point(page, node.id);
-      const entry = this.history.at(-1)!;
-      entry.status = 'attempted';
+      this.attempted = true;
       const button = options.button ?? 'left';
       await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
       for (let clickCount = 1; clickCount <= (options.count ?? 1); clickCount++)
@@ -632,25 +644,32 @@ export class AxHelpers {
     });
   }
 
-  /** Create `name` in the workspace if missing and set it on a file input (its AX node is the input). */
-  async upload(target: Target, name: string, content = 'Test file created for this form.\n') {
+  /** Write `content` to workspace file `name` (or use the existing file) and set it on a file input. */
+  async upload(target: Target, name: string, content?: string) {
     return this.act('upload', target, async () => {
       const { page, node } = await this.resolve('click', target);
       const path = join(this.workspace, name);
-      await writeFile(path, content, { flag: 'wx' }).catch((e: NodeJS.ErrnoException) => {
-        if (e.code !== 'EEXIST') throw e;
+      if (content !== undefined) await writeFile(path, content);
+      const bytes = await readFile(path).catch(() => {
+        throw new Error(`${path} does not exist; pass its content`);
       });
-      this.history.at(-1)!.status = 'attempted';
+      if (!bytes.length) throw new Error(`${name} is empty; pass its content`);
+      this.attempted = true;
       await page.cdp('DOM.setFileInputFiles', { backendNodeId: node.id, files: [path] });
-      const files = await this.onNode<number>(
-        page,
-        node.id,
-        `function(){return this.files?.length ?? -1;}`,
-      );
-      if (files < 1)
-        throw new Error(
-          `#${node.id} is not a file input (files: ${files}); pass the file input's id`,
+      const size = () =>
+        this.onNode<number>(page, node.id, `function(){return this.files?.[0]?.size ?? -1;}`);
+      if ((await size()) < 0)
+        throw new Error(`#${node.id} is not a file input; pass the file input's id`);
+      // A remote browser cannot read the local path and attaches a 0-byte file: build the file in the page.
+      if ((await size()) === 0)
+        await this.onNode(
+          page,
+          node.id,
+          `function({name, b64}){const t=new DataTransfer();t.items.add(new File([Uint8Array.from(atob(b64),c=>c.charCodeAt(0))],name));this.files=t.files;this.dispatchEvent(new Event('input',{bubbles:true}));this.dispatchEvent(new Event('change',{bubbles:true}));}`,
+          { name, b64: bytes.toString('base64') },
         );
+      if ((await size()) !== bytes.length)
+        throw new Error(`the file input holds ${await size()} bytes instead of ${bytes.length}`);
       return { id: node.id, detail: `${node.role} "${clip(node.name, 40)}" = ${name}` };
     });
   }
@@ -659,7 +678,7 @@ export class AxHelpers {
     return this.act('hover', target, async () => {
       const { page, node } = await this.resolve('click', target);
       const p = await this.point(page, node.id);
-      this.history.at(-1)!.status = 'attempted';
+      this.attempted = true;
       await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
       return { id: node.id, detail: `${node.role} "${clip(node.name, 50)}"` };
     });
@@ -679,7 +698,7 @@ export class AxHelpers {
         node.id,
         `function(){return !!(this.nodeType===1?this:this.parentElement).closest('[draggable=true]');}`,
       );
-      this.history.at(-1)!.status = 'attempted';
+      this.attempted = true;
       const move = (
         x: number,
         y: number,
@@ -695,6 +714,7 @@ export class AxHelpers {
         });
       await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y });
       if (html5) await page.cdp('Input.setInterceptDrags', { enabled: true });
+      let pressed = false;
       try {
         const intercepted = html5
           ? this.browser().waitFor('Input.dragIntercepted', {
@@ -703,6 +723,7 @@ export class AxHelpers {
             })
           : undefined;
         await move(a.x, a.y, 'mousePressed');
+        pressed = true;
         for (let i = 1; i <= 10; i++)
           await move(a.x + ((b.x - a.x) * i) / 10, a.y + ((b.y - a.y) * i) / 10);
         if (intercepted) {
@@ -710,8 +731,8 @@ export class AxHelpers {
           for (const type of ['dragEnter', 'dragOver', 'drop'] as const)
             await page.cdp('Input.dispatchDragEvent', { type, x: b.x, y: b.y, data });
         }
-        await move(b.x, b.y, 'mouseReleased');
       } finally {
+        if (pressed) await move(b.x, b.y, 'mouseReleased').catch(() => {});
         if (html5) await page.cdp('Input.setInterceptDrags', { enabled: false }).catch(() => {});
       }
       return {
@@ -726,8 +747,7 @@ export class AxHelpers {
     return this.act('fill', target, async () => {
       const { page, node } = await this.resolve('fill', target);
       const p = await this.point(page, node.id, true);
-      const entry = this.history.at(-1)!;
-      entry.status = 'attempted';
+      this.attempted = true;
       let typedInto = node.id;
       if (
         p.tag === 'INPUT' &&
@@ -833,7 +853,6 @@ export class AxHelpers {
   async select(target: Target, option: string) {
     return this.act('select', target, async () => {
       const { page, node } = await this.resolve('select', target);
-      const entry = this.history.at(-1)!;
       const native = await this.onNode<boolean>(
         page,
         node.id,
@@ -842,7 +861,7 @@ export class AxHelpers {
       if (!native) {
         // Custom dropdowns (role=combobox/listbox): open it with a real click, then click the option by name.
         const p = await this.point(page, node.id);
-        entry.status = 'attempted';
+        this.attempted = true;
         await page.clickAt(p.x, p.y);
         const picked = await this.pickOption(page, option);
         return { id: node.id, detail: `"${clip(node.name, 40)}" -> picked ${picked}` };
@@ -861,7 +880,7 @@ export class AxHelpers {
         }`,
         option,
       );
-      entry.status = 'attempted';
+      this.attempted = true;
       return { id: node.id, detail: `"${clip(node.name, 40)}" = ${JSON.stringify(result)}` };
     });
   }
@@ -871,7 +890,7 @@ export class AxHelpers {
       const { page, node } = await this.resolve('check', target);
       if (node.checked === on) return { id: node.id, detail: `already ${on}` };
       const p = await this.point(page, node.id);
-      this.history.at(-1)!.status = 'attempted';
+      this.attempted = true;
       await page.clickAt(p.x, p.y);
       return { id: node.id, detail: `-> ${on}` };
     });
@@ -907,7 +926,7 @@ export class AxHelpers {
 
   async press(name: string) {
     return this.act('press', name, async () => {
-      this.history.at(-1)!.status = 'attempted';
+      this.attempted = true;
       await this.key(this.page(), name);
       return {};
     });
@@ -919,11 +938,17 @@ export class AxHelpers {
     const want = norm(text);
     while (Date.now() < deadline) {
       try {
-        if ((await this.visibleText()).includes(want)) return true;
+        // innerText is cheap but includes opacity:0 text, so a hit is confirmed against visible text.
+        const hit = await this.page().evaluate(
+          (w: string) =>
+            (document.body?.innerText ?? '').replace(/\s+/g, ' ').toLowerCase().includes(w),
+          want,
+        );
+        if (hit && (await this.visibleText()).includes(want)) return true;
       } catch (error) {
         if (!isContextLoss(error)) throw error;
       }
-      await delay(100);
+      await delay(250);
     }
     this.log(`[waitForText] "${text}" not visible after ${options.timeoutMs ?? 8000}ms`);
     return false;
@@ -1212,9 +1237,29 @@ export class AxHelpers {
       mode?: 'tab' | 'fetch';
       retries?: number;
       timeoutMs?: number;
-      save?: string;
-      progress?: (line: string) => void;
     } = {},
+  ) {
+    const { results, failed, file } = await this.crawl(urls, extract, options, (l) => this.log(l));
+    this.summarize(
+      'map',
+      results.filter((r) => r.ok).map((r) => r.value),
+      `; ${failed.length} failed${failed.length ? ` e.g. ${clip(JSON.stringify(failed.slice(0, 2)), 300)}` : ''}; saved ${file}`,
+    );
+    return results;
+  }
+
+  private async crawl(
+    urls: string[],
+    extract: unknown,
+    options: {
+      concurrency?: number;
+      perHost?: number;
+      minGapMs?: number;
+      mode?: 'tab' | 'fetch';
+      retries?: number;
+      timeoutMs?: number;
+    },
+    say: (line: string) => void,
   ) {
     if (!Array.isArray(urls) || !urls.every((u) => typeof u === 'string'))
       throw new Error('map needs an array of URL strings.');
@@ -1225,11 +1270,7 @@ export class AxHelpers {
     const timeoutMs = options.timeoutMs ?? 25000;
     const mode = options.mode ?? 'tab';
     // Scratch under the host journal dir so partial results never masquerade as deliverables.
-    const file = join(
-      this.workspace,
-      '.browser-use',
-      options.save ?? `bu-map-${++this.mapCount}.json`,
-    );
+    const file = join(this.workspace, '.browser-use', `bu-map-${++this.mapCount}.json`);
     await mkdir(join(this.workspace, '.browser-use'), { recursive: true }).catch(() => {});
     const results: {
       url: string;
@@ -1244,7 +1285,6 @@ export class AxHelpers {
     const started = Date.now();
     let next = 0;
     let done = 0;
-    const say = options.progress ?? ((l: string) => this.log(l));
     const host = (u: string) => {
       try {
         return new URL(u).host;
@@ -1312,13 +1352,7 @@ export class AxHelpers {
       }),
     );
     await flush();
-    const failed = results.filter((r) => !r.ok);
-    this.summarize(
-      'map',
-      results.filter((r) => r.ok).map((r) => r.value),
-      `; ${failed.length} failed${failed.length ? ` e.g. ${clip(JSON.stringify(failed.slice(0, 2)), 300)}` : ''}; saved ${file}`,
-    );
-    return results;
+    return { results, failed: results.filter((r) => !r.ok), file };
   }
 
   private async fetchOne(url: string, extract: unknown, timeoutMs: number) {
@@ -1344,13 +1378,13 @@ export class AxHelpers {
   }
 
   private async tabOne(url: string, extract: unknown, timeoutMs: number) {
-    const tabs = this.tabs();
-    const page = await tabs.open();
+    const page = await this.tabs().open();
+    let timer: NodeJS.Timeout | undefined;
     try {
       const nav = await Promise.race([
         page.cdp('Page.navigate', { url }),
-        delay(timeoutMs).then(() => {
-          throw new Error(`timeout after ${timeoutMs}ms`);
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
         }),
       ]);
       if ((nav as { errorText?: string }).errorText)
@@ -1367,6 +1401,7 @@ export class AxHelpers {
         }));
       return { status, value, retryAfter: undefined as number | undefined };
     } finally {
+      clearTimeout(timer);
       await page.close().catch(() => {});
     }
   }
