@@ -121,6 +121,10 @@ const SERP = (): SerpRow[] =>
     .filter((r) => r.title)
     .slice(0, 10);
 
+/** A value its bu call already printed: the REPL's echo of it becomes a one-line note instead of a second copy. */
+const printed = <T extends object>(value: T, note: string): T =>
+  Object.defineProperty(value, Symbol.for('nodejs.util.inspect.custom'), { value: () => note });
+
 /** Appended to the system prompt when the `bu` helpers are enabled. */
 export const AX_PROMPT = `
 
@@ -378,7 +382,7 @@ export class AxHelpers {
       this.log(
         `[state${this.at()}] ${result.title} | ${result.url}${this.flushDialogs()}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
       );
-    return result;
+    return options.print === false ? result : printed(result, '[state printed above]');
   }
 
   /** Web search in the current tab via DuckDuckGo's HTML page; Google answers automated browsers with captchas. */
@@ -395,14 +399,22 @@ export class AxHelpers {
         ),
       );
       const out = Object.fromEntries(query.slice(0, 6).map((q, i) => [q, rows[i]!]));
-      for (const [q, r] of Object.entries(out)) this.summarize(`search ${JSON.stringify(q)}`, r);
-      return out;
+      for (const [q, r] of Object.entries(out)) this.logSerp(q, r);
+      return printed(out, '[search results printed above]');
     }
     await this.goto(url(query));
     this.dirty = false; // the results are returned; a state dump of the search page is noise
     const rows = await this.page().evaluate(SERP);
-    this.summarize('search', rows);
-    return rows;
+    this.logSerp(query, rows);
+    return printed(rows, '[search results printed above]');
+  }
+
+  private logSerp(query: string, rows: SerpRow[]) {
+    this.log(
+      `[search ${JSON.stringify(query)}${this.at()}] ${rows.length} result(s)\n${rows
+        .map((r, i) => `${i + 1}. ${clip(r.title, 90)} | ${r.url} | ${clip(r.snippet, 150)}`)
+        .join('\n')}`,
+    );
   }
 
   /** Controls whose name/value contains the query (case-insensitive). Read-only. */
