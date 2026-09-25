@@ -149,7 +149,13 @@ export class Page {
         .filter((n) => !n.ignored && n.backendDOMNodeId)
         .map((n) => ({
           id: n.backendDOMNodeId!,
-          role: String(n.role?.value ?? ''),
+          // A focusable contenteditable element is a text field with no textbox role.
+          role:
+            n.role?.value === 'generic' &&
+            n.properties?.some((p) => p.name === 'editable') &&
+            n.properties.some((p) => p.name === 'focusable' && p.value.value)
+              ? 'textbox'
+              : String(n.role?.value ?? ''),
           name: String(n.name?.value ?? '')
             .replace(/\s+/g, ' ')
             .trim(),
