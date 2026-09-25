@@ -34,6 +34,13 @@ export type {
 } from './browser.js';
 export type { CellResult, Image } from './protocol.js';
 export { CellError } from './runtime.js';
+export { createJevResolver } from './semantic-resolver.js';
+export type {
+  ChoiceResolver,
+  ChoiceRequest,
+  ChoiceAnswer,
+  SemanticOptions,
+} from './semantic-resolver.js';
 export type { AgentTool, AgentEvent, StreamFn } from '@earendil-works/pi-agent-core';
 export { Type, type Static, type TSchema } from 'typebox';
 export { builtinModels } from '@earendil-works/pi-ai/providers/all';
@@ -140,6 +147,7 @@ export class BrowserUse {
     const browser = await openBrowser(options.browser);
     const runtime = new BrowserRuntime(
       {
+        semantic: !!options.semantic,
         endpoint: browser.endpoint,
         ...(options.allowedDomains !== undefined ? { allowedDomains: options.allowedDomains } : {}),
         ...(options.prohibitedDomains !== undefined
@@ -159,6 +167,7 @@ export class BrowserUse {
         maxOutputChars,
       },
       executable,
+      options.semantic?.resolve,
     );
     const config = { ...options, streamFn: options.streamFn ?? models.streamSimple.bind(models) };
     const instance = new BrowserUse(config, model, runtime, browser, workspace);

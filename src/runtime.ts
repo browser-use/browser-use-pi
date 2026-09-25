@@ -6,6 +6,7 @@ import { CDP } from './cdp.js';
 import { execFile, fork, type ChildProcess } from 'node:child_process';
 import type { BrowserAction, CellResult, WorkerConfig, WorkerResponse } from './protocol.js';
 import { positiveInteger } from './protocol.js';
+import type { ChoiceResolver } from './semantic-resolver.js';
 
 /** Bun hosts use the same V8 worker as Node hosts, including its cancellation boundary. */
 export async function workerExecutable(): Promise<string> {
@@ -66,11 +67,13 @@ export class BrowserRuntime {
   private closed = false;
   private settled: Promise<void> = Promise.resolve();
   private release: (() => void) | undefined;
+  private choices = new Set<AbortController>();
   private pending: ((error: Error) => void) | undefined;
 
   constructor(
     private readonly config: WorkerConfig,
     private readonly executable?: string,
+    private readonly resolveChoice?: ChoiceResolver,
   ) {}
 
   private async start(signal?: AbortSignal): Promise<ChildProcess> {
@@ -85,6 +88,30 @@ export class BrowserRuntime {
     });
     this.worker = worker;
     worker.on('message', (message: WorkerResponse) => {
+      if (message.type === 'choice') {
+        const controller = new AbortController();
+        this.choices.add(controller);
+        void (async () => {
+          try {
+            if (!this.config.semantic || !this.resolveChoice)
+              throw new Error(
+                'NEEDS_PI: semantic resolver unavailable; use observed IDs or exact names.',
+              );
+            const answer = await this.resolveChoice(message.request, controller.signal);
+            if (!controller.signal.aborted && worker.connected)
+              worker.send({ type: 'choice-result', id: message.id, answer });
+          } catch {
+            if (!controller.signal.aborted && worker.connected)
+              worker.send({
+                type: 'choice-result',
+                id: message.id,
+                error: 'NEEDS_PI: target resolution failed; no browser mutation executed.',
+              });
+          } finally {
+            this.choices.delete(controller);
+          }
+        })();
+      }
       if (message.type === 'partial' && this.runId && message.runId === this.runId)
         this.partial = { path: message.path, value: JSON.parse(message.valueJson) };
       if (message.type === 'action') this.onAction?.(message.action);
@@ -133,7 +160,12 @@ export class BrowserRuntime {
         else resolve(value);
       };
       const message = (value: WorkerResponse) => {
-        if (value.type !== 'owned' && value.type !== 'action' && value.type !== 'partial')
+        if (
+          value.type !== 'owned' &&
+          value.type !== 'action' &&
+          value.type !== 'partial' &&
+          value.type !== 'choice'
+        )
           finish(value);
       };
       const abort = () =>
@@ -230,6 +262,8 @@ export class BrowserRuntime {
   }
 
   private async terminate() {
+    for (const controller of this.choices) controller.abort();
+    this.choices.clear();
     const worker = this.worker;
     this.worker = undefined;
     if (worker && worker.exitCode === null && worker.signalCode === null) {
