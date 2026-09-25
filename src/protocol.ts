@@ -24,8 +24,6 @@ export interface CellResult {
 }
 export interface WorkerConfig extends importPolicy {
   semantic?: boolean;
-  /** Tuning knobs for the AX helpers; defaults preserve the original behavior. */
-  ax?: import('./ax.js').AxOptions;
   sensitiveData?: import('./policy.js').SensitiveData;
   redact?: string[];
   endpoint: string;

@@ -86,27 +86,22 @@ const isContextLoss = (e: unknown) =>
     String(e instanceof Error ? e.message : e),
   );
 
-export interface AxOptions {
-  quietMs?: number;
-  capMs?: number;
-  autoState?: boolean;
-  autoMax?: number;
-  autoText?: number;
-  mapConcurrency?: number;
-  /** Action return values print nothing; the one-line [ok] log already reports them. */
-  quietEcho?: boolean;
-  /** Host URL of a remote unblocking fetch service (bcode's fetch-use equivalent). Unset = bu.fetch unavailable. */
-  fetchProxy?: string;
-  /** bu.links reads DOM anchors (absolute href) instead of AX url properties, which some sites omit. */
-  domLinks?: boolean;
-  /** Lines bu.read prints (it always returns all lines). */
-  readLines?: number;
-  /** Enable network tracking before navigation so bu.requests() also sees page-load requests. */
-  trackEarly?: boolean;
-  /** Print the UTC time of every observation/action so access times are trace-visible, never reconstructed. */
-  stamp?: boolean;
-}
-const SILENT = Symbol.for('nodejs.util.inspect.custom');
+/** Appended to the system prompt when the `bu` helpers are enabled. */
+export const AX_PROMPT = `
+
+Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
+- Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically, so you rarely need a separate look.
+- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'ArrowDown').
+  t = a numeric id from bu.state()/bu.find(), the unique exact accessible name, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
+- Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids.
+- Read without dumping HTML: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows as objects keyed by column headers; await bu.list(i?) -> [{text, links}]; await bu.links('filter') -> [{name,url}]. Each prints a count, fields and a sample.
+- Many pages: const rows = await bu.map(urls, () => ({title: document.title, price: document.querySelector('.price')?.textContent}), {concurrency: 6}) opens pages in parallel background tabs with per-host politeness and 429 backoff; returns [{url, ok, status, value|error}] and saves partial results to the workspace. {mode:'fetch'} fetches over HTTP instead and calls extract(text, {url,status}) in Node. Never loop page.goto over many URLs.
+- Work longer than ~2 minutes: const id = bu.job('name', async progress => {...}); then await bu.wait(id) blocks up to 150 s, prints progress and returns {done, value}. Never poll with sleep loops or "alive" prints.
+- NEVER write blind sleeps (setTimeout/new Promise delays/sleep) to wait for pages. Actions already settle. For a specific condition use await bu.waitForText('Results') or await page.waitFor(predicate).
+- Inspect only when the next step depends on content you have not seen. Checkpoint deliverables as you go.
+- When the deliverables are ready, write all files in one javascript call and call finish or finish_from_js in that same response; do not spend a separate turn re-reading files you just wrote.
+- Timestamps: every bu line shows the UTC time it observed the page ('at ...Z'). Use those printed times for observation and access times in deliverables. Never generate, backfill or guess times or dates: new Date() at the end of the work is not an observation time.
+`;
 
 /** Fast, strict accessibility-tree helpers for the persistent REPL. Raw page/CDP stays available. */
 export class AxHelpers {
@@ -134,8 +129,9 @@ export class AxHelpers {
     }
   >();
   private mapCount = 0;
+  // Observation times are printed, never reconstructed later by the model.
   private at() {
-    return this.options.stamp ? ` at ${new Date().toISOString().slice(0, 19)}Z` : '';
+    return ` at ${new Date().toISOString().slice(0, 19)}Z`;
   }
 
   constructor(
@@ -144,16 +140,11 @@ export class AxHelpers {
     private browser: () => CDP,
     private workspace: string,
     private log: (text: string) => void,
-    readonly options: AxOptions = {},
   ) {}
 
   private inflight = new Map<string, Map<string, number>>();
   private lastNet = new Map<string, number>();
   private tracked = new Set<string>();
-  private seenRequests = new Map<
-    string,
-    { url: string; type: string; method: string; status?: number; mime?: string; at: number }[]
-  >();
 
   /** Track in-flight requests per page session from CDP Network events (no page patching). */
   private async trackNetwork(page: Page) {
@@ -166,31 +157,11 @@ export class AxHelpers {
         const params = raw as { requestId: string; type?: string };
         const map = this.inflight.get(session) ?? new Map<string, number>();
         this.inflight.set(session, map);
-        const log = this.seenRequests.get(session) ?? [];
-        this.seenRequests.set(session, log);
         if (method === 'Network.requestWillBeSent') {
-          const p = raw as {
-            requestId: string;
-            type?: string;
-            request: { url: string; method: string };
-          };
           if (
             !['WebSocket', 'EventSource', 'Media', 'Ping', 'Manifest'].includes(params.type ?? '')
           )
             map.set(params.requestId, Date.now());
-          if (['XHR', 'Fetch', 'Document'].includes(p.type ?? '') && log.length < 2000)
-            log.push({
-              url: p.request.url,
-              type: p.type ?? '',
-              method: p.request.method,
-              at: Date.now(),
-              id: p.requestId,
-            } as never);
-        } else if (method === 'Network.responseReceived') {
-          const p = raw as { requestId: string; response: { status: number; mimeType: string } };
-          const hit = log.find((r) => (r as unknown as { id: string }).id === p.requestId);
-          if (hit) ((hit.status = p.response.status), (hit.mime = p.response.mimeType));
-          return;
         } else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed')
           map.delete(params.requestId);
         else return;
@@ -212,8 +183,8 @@ export class AxHelpers {
    */
   async settle(options: { capMs?: number; quietMs?: number; page?: Page } = {}) {
     const page = options.page ?? this.page();
-    const cap = options.capMs ?? this.options.capMs ?? 2000;
-    const quiet = options.quietMs ?? this.options.quietMs ?? 250;
+    const cap = options.capMs ?? 2000;
+    const quiet = options.quietMs ?? 250;
     const start = Date.now();
     const session = await this.trackNetwork(page).catch(() => undefined);
     while (Date.now() - start < cap) {
@@ -430,7 +401,7 @@ export class AxHelpers {
       this.log(
         `[ok${this.at()}] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}`,
       );
-      const out = {
+      return {
         ok: true,
         op,
         id,
@@ -439,9 +410,6 @@ export class AxHelpers {
         settled,
         ...(value !== undefined ? { value } : {}),
       };
-      if (this.options.quietEcho)
-        Object.defineProperty(out, SILENT, { value: () => '(ok)', enumerable: false });
-      return out;
     } catch (error) {
       entry.status = entry.status === 'attempted' ? 'uncertain' : 'not_executed';
       if (entry.status === 'uncertain') this.dirty = true;
@@ -455,7 +423,6 @@ export class AxHelpers {
   async goto(url: string) {
     return this.act('goto', url, async () => {
       const page = this.page();
-      if (this.options.trackEarly) await this.trackNetwork(page).catch(() => undefined);
       const result = await page.cdp('Page.navigate', { url });
       if (result.errorText) throw new Error(`Navigation failed: ${result.errorText}`);
       const status = await this.status(page);
@@ -786,7 +753,7 @@ export class AxHelpers {
     };
     walk(root);
     const merged = lines.filter((l, i) => l !== lines[i - 1]);
-    const shown = this.options.readLines ?? 25;
+    const shown = 25;
     this.log(
       `[read${region ? ` ${region}` : ''}${this.at()}] ${merged.length} line(s) | ${info.url}\n${clip(merged.slice(0, shown).join('\n'), shown * 100)}${merged.length > shown ? `\n… ${merged.length - shown} more lines in the returned array` : ''}`,
     );
@@ -889,25 +856,6 @@ export class AxHelpers {
 
   /** All links on the page, optionally filtered by name/url substring. */
   async links(filter?: string) {
-    if (this.options.domLinks) {
-      const f = filter ? norm(filter) : '';
-      const all = await this.page().evaluate(() =>
-        Array.from(document.querySelectorAll('a[href]')).map((a) => ({
-          name: (a.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 200),
-          url: (a as HTMLAnchorElement).href,
-        })),
-      );
-      const seen = new Set<string>();
-      const rows = all
-        .filter(
-          (l) =>
-            /^https?:/.test(l.url) &&
-            (!f || norm(l.name).includes(f) || l.url.toLowerCase().includes(f)),
-        )
-        .filter((l) => (seen.has(l.url + l.name) ? false : (seen.add(l.url + l.name), true)));
-      this.summarize('links', rows);
-      return rows;
-    }
     const { nodes } = await this.tree();
     const f = filter ? norm(filter) : '';
     const seen = new Set<string>();
@@ -935,7 +883,7 @@ export class AxHelpers {
       concurrency?: number;
       perHost?: number;
       minGapMs?: number;
-      mode?: 'tab' | 'fetch' | 'remote';
+      mode?: 'tab' | 'fetch';
       retries?: number;
       timeoutMs?: number;
       save?: string;
@@ -944,10 +892,7 @@ export class AxHelpers {
   ) {
     if (!Array.isArray(urls) || !urls.every((u) => typeof u === 'string'))
       throw new Error('map needs an array of URL strings.');
-    const concurrency = Math.max(
-      1,
-      Math.min(options.concurrency ?? this.options.mapConcurrency ?? 6, 12),
-    );
+    const concurrency = Math.max(1, Math.min(options.concurrency ?? 6, 12));
     const perHost = Math.max(1, options.perHost ?? 2);
     const minGap = options.minGapMs ?? 250;
     const retries = options.retries ?? 2;
@@ -990,11 +935,9 @@ export class AxHelpers {
         lastStart.set(h, Date.now());
         try {
           const r =
-            mode === 'remote'
-              ? await this.remoteOne(url, extract, timeoutMs)
-              : mode === 'fetch'
-                ? await this.fetchOne(url, extract, timeoutMs)
-                : await this.tabOne(url, extract, timeoutMs);
+            mode === 'fetch'
+              ? await this.fetchOne(url, extract, timeoutMs)
+              : await this.tabOne(url, extract, timeoutMs);
           if ((r.status === 429 || r.status === 503) && attempt < retries) {
             const wait = Math.min(30000, (r.retryAfter ?? 2 ** attempt * 2) * 1000);
             say(
@@ -1008,7 +951,7 @@ export class AxHelpers {
             ok: r.status === 0 || (r.status >= 200 && r.status < 400),
             status: r.status,
             value: r.value,
-            ...(this.options.stamp ? { observedAt: new Date().toISOString() } : {}),
+            observedAt: new Date().toISOString(),
           };
         } catch (error) {
           if (attempt < retries && /timeout|net::ERR|ECONNRESET|fetch failed/i.test(String(error)))
@@ -1074,16 +1017,6 @@ export class AxHelpers {
     return { status: response.status, value, retryAfter };
   }
 
-  private async remoteOne(url: string, extract: unknown, timeoutMs: number) {
-    const r = await this.remoteFetch(url, timeoutMs);
-    if (r.error && !r.status) throw new Error(r.error);
-    const value =
-      typeof extract === 'function'
-        ? await (extract as (t: string, m: object) => unknown)(r.text, { url, status: r.status })
-        : r.text.slice(0, 20000);
-    return { status: r.status, value, retryAfter: undefined as number | undefined };
-  }
-
   private async tabOne(url: string, extract: unknown, timeoutMs: number) {
     const tabs = this.tabs();
     const page = await tabs.open();
@@ -1110,64 +1043,6 @@ export class AxHelpers {
     } finally {
       await page.close().catch(() => {});
     }
-  }
-
-  /** Fetch a URL through the remote fetch service (different network path than this browser). */
-  async fetch(url: string, options: { timeoutMs?: number; print?: boolean } = {}) {
-    if (!this.options.fetchProxy) throw new Error('bu.fetch is not enabled in this session.');
-    const r = await this.remoteFetch(url, options.timeoutMs ?? 30000);
-    if (options.print !== false)
-      this.log(
-        `[fetch${this.at()}] ${url} -> ${r.status} ${r.contentType} ${r.text.length} chars${r.error ? ` error: ${r.error}` : ''}\n${clip(r.text.replace(/\s+/g, ' '), 300)}`,
-      );
-    return r;
-  }
-
-  private async remoteFetch(url: string, timeoutMs: number) {
-    const response = await fetch(this.options.fetchProxy!, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url, timeout_ms: timeoutMs }),
-      signal: AbortSignal.timeout(timeoutMs + 20000),
-    });
-    const d = (await response.json()) as {
-      status_code?: number;
-      body?: string;
-      body_base64?: string;
-      is_binary?: boolean;
-      headers?: Record<string, string[]>;
-      error?: string;
-    };
-    const contentType =
-      Object.entries(d.headers ?? {}).find(([k]) => k.toLowerCase() === 'content-type')?.[1]?.[0] ??
-      '';
-    const text =
-      d.is_binary && d.body_base64
-        ? Buffer.from(d.body_base64, 'base64').toString('utf8')
-        : (d.body ?? '');
-    return {
-      url,
-      status: d.status_code ?? (d.error ? 0 : response.status),
-      contentType,
-      text,
-      ...(d.error ? { error: d.error } : {}),
-    };
-  }
-
-  /** Data requests (XHR/fetch/document) this tab made since tracking began: find the JSON/API behind a page. */
-  async requests(filter?: string, options: { max?: number } = {}) {
-    const session = await this.trackNetwork(this.page());
-    const f = filter ? filter.toLowerCase() : '';
-    const rows = (this.seenRequests.get(session ?? '') ?? [])
-      .filter((r) => !f || r.url.toLowerCase().includes(f) || (r.mime ?? '').includes(f))
-      .map(({ url, type, method, status, mime }) => ({ url, type, method, status, mime }))
-      .slice(-(options.max ?? 60));
-    this.summarize(
-      'requests',
-      rows,
-      ' (fetch JSON ones directly: await page.evaluate(async u => (await fetch(u)).text(), url))',
-    );
-    return rows;
   }
 
   /** Start long work in the background; bu.wait(job) blocks for it with streamed progress. */

@@ -137,7 +137,6 @@ Object.assign(realm, {
           () => browser,
           config.workspace,
           (text) => (Reflect.get(realm, 'console') as Console).log(text),
-          config.ax ?? {},
         ),
       }
     : {}),
@@ -341,10 +340,10 @@ process.on('message', async (message: WorkerRequest) => {
   } finally {
     // After a cell that changed the page through bu.*, show the resulting state without another model turn.
     const bu = Reflect.get(realm, 'bu') as AxHelpers | undefined;
-    if (bu?.dirty && bu.options.autoState !== false) {
+    if (bu?.dirty) {
       bu.dirty = false;
       await bu
-        .state({ max: bu.options.autoMax ?? 40, text: bu.options.autoText ?? 800 })
+        .state({ max: 40, text: 800 })
         .catch((error: unknown) => sink.write(`[state unavailable: ${String(error)}]\n`));
     }
     active = false;

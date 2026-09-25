@@ -15,7 +15,7 @@ import { researchTools } from './research-tools.js';
 import type { BrowserUseOptions, RunOptions, RunResult, StopReason } from './types.js';
 import { redact } from './history.js';
 import { SYSTEM_PROMPT } from './prompt.js';
-import { AX_PROMPT } from './ax-prompt.js';
+import { AX_PROMPT } from './ax.js';
 import { positiveInteger } from './protocol.js';
 import { bounded, type RunControl } from './control.js';
 
