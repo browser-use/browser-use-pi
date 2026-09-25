@@ -101,6 +101,10 @@ const isContextLoss = (e: unknown) =>
     String(e instanceof Error ? e.message : e),
   );
 
+/** A first-person give-up ("I could not…", "Unable to find…"), not a negative finding ("returns no results"). */
+export const GAVE_UP =
+  /\b(I (?:could ?n[o'’]t|can ?n[o'’]t|cannot|was(?: not|n[o'’]t) able to)|unable to (?:find|access|complete|locate|verify|identify|determine))\b/i;
+
 type SerpRow = { title: string; url: string; snippet: string };
 /** DuckDuckGo HTML result rows, run inside the results page. */
 const SERP = (): SerpRow[] => {
