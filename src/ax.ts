@@ -109,6 +109,7 @@ Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw
 - If an interaction fails, try one different route (ids from bu.find, another control, keyboard) before reporting that you are blocked.
 - Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids.
 - Read without dumping HTML: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows as objects keyed by column headers; await bu.list(i?) -> [{text, links}]; await bu.links('filter') -> [{name,url}]. Each prints a count, fields and a sample.
+- Web search: await bu.search('exact words') -> [{title,url,snippet}] from DuckDuckGo in the current tab (Google shows captchas to automated browsers). Then open or bu.map the promising urls.
 - Many pages: const rows = await bu.map(urls, () => ({title: document.title, price: document.querySelector('.price')?.textContent}), {concurrency: 6}) opens pages in parallel background tabs with per-host politeness and 429 backoff; returns [{url, ok, status, value|error}] and saves partial results to the workspace. {mode:'fetch'} fetches over HTTP instead and calls extract(text, {url,status}) in Node. Never loop page.goto over many URLs.
 - Work longer than ~2 minutes: const id = bu.job('name', async progress => {...}); then await bu.wait(id) blocks up to 150 s, prints progress and returns {done, value}. Never poll with sleep loops or "alive" prints.
 - NEVER write blind sleeps (setTimeout/new Promise delays/sleep) to wait for pages. Actions already settle. For a specific condition use await bu.waitForText('Results') or await page.waitFor(predicate).
@@ -297,6 +298,30 @@ export class AxHelpers {
         `[state${this.at()}] ${result.title} | ${result.url}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
       );
     return result;
+  }
+
+  /** Web search in the current tab via DuckDuckGo's HTML page; Google answers automated browsers with captchas. */
+  async search(query: string, options: { max?: number } = {}) {
+    await this.goto(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`);
+    this.dirty = false; // the results are returned; a state dump of the search page is noise
+    const rows = await this.page().evaluate(
+      (max: number) =>
+        Array.from(document.querySelectorAll('.result:not(.result--ad)'))
+          .map((r) => {
+            const a = r.querySelector('a.result__a');
+            const link = new URL(a?.getAttribute('href') ?? '', location.href);
+            return {
+              title: a?.textContent?.trim() ?? '',
+              url: link.searchParams.get('uddg') ?? link.href,
+              snippet: r.querySelector('.result__snippet')?.textContent?.trim() ?? '',
+            };
+          })
+          .filter((r) => r.title)
+          .slice(0, max),
+      options.max ?? 10,
+    );
+    this.summarize('search', rows);
+    return rows;
   }
 
   /** Controls whose name/value contains the query (case-insensitive). Read-only. */
