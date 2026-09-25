@@ -399,7 +399,7 @@ export class AxHelpers {
         ),
       );
       const out = Object.fromEntries(query.slice(0, 6).map((q, i) => [q, rows[i]!]));
-      for (const [q, r] of Object.entries(out)) this.logSerp(q, r);
+      for (const [q, r] of Object.entries(out)) this.logSerp(q, r.slice(0, 5));
       return printed(out, '[search results printed above]');
     }
     await this.goto(url(query));
