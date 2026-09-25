@@ -84,6 +84,11 @@ export class BrowserUse {
       throw new Error('researchTools must be boolean.');
     if (options.semantic !== undefined && typeof options.semantic !== 'boolean')
       throw new Error('semantic must be boolean.');
+    if (
+      options.webSearch !== undefined &&
+      (typeof options.webSearch?.url !== 'string' || typeof options.webSearch?.token !== 'string')
+    )
+      throw new Error('webSearch must be {url, token}.');
     if (options.recording && typeof options.recording === 'object') {
       positiveInteger('recording.intervalMs', options.recording.intervalMs ?? 750);
       positiveInteger('recording.maxFrames', options.recording.maxFrames ?? 400);
@@ -143,6 +148,7 @@ export class BrowserUse {
     const runtime = new BrowserRuntime(
       {
         semantic: !!options.semantic,
+        ...(options.webSearch ? { webSearch: options.webSearch } : {}),
         endpoint: browser.endpoint,
         ...(options.allowedDomains !== undefined ? { allowedDomains: options.allowedDomains } : {}),
         ...(options.prohibitedDomains !== undefined

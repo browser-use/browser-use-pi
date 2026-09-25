@@ -24,6 +24,7 @@ export interface CellResult {
 }
 export interface WorkerConfig extends importPolicy {
   semantic?: boolean;
+  webSearch?: { url: string; token: string };
   sensitiveData?: import('./policy.js').SensitiveData;
   redact?: string[];
   endpoint: string;

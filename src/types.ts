@@ -16,6 +16,8 @@ import type { BrowserOptions } from './browser.js';
 export interface BrowserUseOptions extends DomainOptions {
   /** Adds the `bu` AX helpers and their prompt to the JavaScript REPL. Disabled by default. */
   semantic?: boolean;
+  /** Search endpoint with Browser Use Cloud's /api/v4/search contract; enables bu.search. */
+  webSearch?: { url: string; token: string };
   sensitiveData?: SensitiveData;
   /** Anonymous run counters. Disable with false, DO_NOT_TRACK=1 or ANONYMIZED_TELEMETRY=false. */
   telemetry?: boolean;

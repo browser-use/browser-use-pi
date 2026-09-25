@@ -137,6 +137,7 @@ Object.assign(realm, {
           () => browser,
           config.workspace,
           (text) => (Reflect.get(realm, 'console') as Console).log(text),
+          config.webSearch,
         ),
       }
     : {}),
