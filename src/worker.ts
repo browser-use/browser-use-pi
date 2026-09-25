@@ -342,9 +342,15 @@ process.on('message', async (message: WorkerRequest) => {
     const bu = Reflect.get(realm, 'bu') as AxHelpers | undefined;
     if (bu?.dirty) {
       bu.dirty = false;
-      await bu
-        .state({ max: 40, text: 800 })
-        .catch((error: unknown) => sink.write(`[state unavailable: ${String(error)}]\n`));
+      // Full AX snapshots of very large pages can stall the renderer; don't add one the model didn't ask for.
+      if (bu.snapshotMs > 3000)
+        sink.write(
+          `[state skipped: this page's AX tree took ${bu.snapshotMs} ms; call bu.find() or bu.state() if needed]\n`,
+        );
+      else
+        await bu
+          .state({ max: 40, text: 800 })
+          .catch((error: unknown) => sink.write(`[state unavailable: ${String(error)}]\n`));
     }
     active = false;
     browser.observeResponse = undefined;

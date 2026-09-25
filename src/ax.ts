@@ -53,6 +53,14 @@ const ROLES: Record<Op, Set<string>> = {
   select: new Set(['combobox', 'listbox']),
   check: new Set(['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio']),
 };
+const SUGGESTIONS = new Set([
+  'option',
+  'menuitem',
+  'menuitemradio',
+  'treeitem',
+  'gridcell',
+  'listitem',
+]);
 const CONTROLS = new Set([
   ...ROLES.fill,
   ...ROLES.select,
@@ -92,7 +100,10 @@ export const AX_PROMPT = `
 Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
 - Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically, so you rarely need a separate look.
 - Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'ArrowDown').
-  t = a numeric id from bu.state()/bu.find(), the unique exact accessible name, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
+  t = a numeric id from bu.state()/bu.find(), the exact accessible name or a unique prefix of it, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
+- Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Don't press Enter on a suggestion list you have not seen.
+- Never construct opaque or encoded URL parameters (base64/protobuf tokens such as tfs=); use the site's controls or URLs you have observed.
+- If an interaction fails, try one different route (ids from bu.find, another control, keyboard) before reporting that you are blocked.
 - Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids.
 - Read without dumping HTML: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows as objects keyed by column headers; await bu.list(i?) -> [{text, links}]; await bu.links('filter') -> [{name,url}]. Each prints a count, fields and a sample.
 - Many pages: const rows = await bu.map(urls, () => ({title: document.title, price: document.querySelector('.price')?.textContent}), {concurrency: 6}) opens pages in parallel background tabs with per-host politeness and 429 backoff; returns [{url, ok, status, value|error}] and saves partial results to the workspace. {mode:'fetch'} fetches over HTTP instead and calls extract(text, {url,status}) in Node. Never loop page.goto over many URLs.
@@ -224,10 +235,15 @@ export class AxHelpers {
     return { why: 'cap', ready: 'unknown', ms: Date.now() - start };
   }
 
+  /** Duration of the last full AX snapshot; the worker skips its automatic state print on slow pages. */
+  snapshotMs = 0;
   private async nodes(page = this.page()) {
     for (let i = 0; ; i++) {
       try {
-        return await page.snapshot();
+        const started = Date.now();
+        const snap = await page.snapshot();
+        this.snapshotMs = Date.now() - started;
+        return snap;
       } catch (error) {
         if (i >= 20 || !isContextLoss(error)) throw error;
         await delay(50);
@@ -309,12 +325,21 @@ export class AxHelpers {
       if (typeof name !== 'string' || !name.trim())
         throw new Error('Target must be an id, an exact accessible name, or {name, role}.');
       label = `"${name}"${role ? ` (${role})` : ''}`;
-      matches = usable.filter((n) => norm(n.name) === norm(name) && (!role || n.role === role));
-      const enabled = matches.filter((n) => !n.disabled);
-      if (enabled.length) matches = enabled;
-      // A button's own text node repeats its name; prefer real controls over text/structure nodes.
-      const strong = matches.filter((n) => CONTROLS.has(n.role));
-      if (strong.length) matches = strong;
+      const prefer = (found: AXNode[]) => {
+        const enabled = found.filter((n) => !n.disabled);
+        if (enabled.length) found = enabled;
+        // A button's own text node repeats its name; prefer real controls over text/structure nodes.
+        const strong = found.filter((n) => CONTROLS.has(n.role));
+        return strong.length ? strong : found;
+      };
+      matches = prefer(
+        usable.filter((n) => norm(n.name) === norm(name) && (!role || n.role === role)),
+      );
+      // Sites append details to names ("Done. Search for…", "October 14, 2026, 97 US dollars"); a unique prefix is still exact enough.
+      if (!matches.length && norm(name).length >= 3)
+        matches = prefer(
+          usable.filter((n) => norm(n.name).startsWith(norm(name)) && (!role || n.role === role)),
+        );
       if (!matches.length) {
         const words = norm(name)
           .split(' ')
@@ -353,13 +378,16 @@ export class AxHelpers {
     }
   }
 
-  /** Scroll into view and return a clickable, unobstructed center point, or throw a precise reason. */
-  private async point(page: Page, id: number) {
+  /**
+   * Scroll into view and return a clickable, unobstructed center point, or throw a precise reason.
+   * With editableCover, a text field overlaid by another text field is accepted: comboboxes often swap in their own input.
+   */
+  private async point(page: Page, id: number, editableCover = false) {
     await page.cdp('DOM.scrollIntoViewIfNeeded', { backendNodeId: id }).catch(() => {});
     return this.onNode<{ x: number; y: number; tag: string; type: string; editable: boolean }>(
       page,
       id,
-      `function() {
+      `function(editableCover) {
         const e = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;
         if (!e || !e.isConnected) throw Error('Target detached');
         if (e.matches(':disabled') || e.closest('[inert],[aria-disabled="true"]')) throw Error('Target disabled');
@@ -367,10 +395,12 @@ export class AxHelpers {
         const r = e.getBoundingClientRect(), x = r.x + r.width/2, y = r.y + r.height/2;
         if (!r.width || !r.height || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) throw Error('Target outside viewport');
         const hit = e.getRootNode().elementFromPoint(x, y);
-        if (!e.contains(hit) && !(hit && hit.contains(e) && getComputedStyle(hit).pointerEvents !== 'none' && hit.tagName === 'LABEL'))
+        const textField = (n) => n && (['INPUT','TEXTAREA'].includes(n.tagName) || n.isContentEditable);
+        if (!e.contains(hit) && !(hit && hit.contains(e) && getComputedStyle(hit).pointerEvents !== 'none' && hit.tagName === 'LABEL') && !(editableCover && textField(e) && textField(hit)))
           throw Error('Target covered by ' + (hit ? hit.tagName.toLowerCase() + (hit.id ? '#' + hit.id : '') + (hit.className && typeof hit.className === 'string' ? '.' + hit.className.split(' ')[0] : '') : 'nothing'));
-        return {x, y, tag: e.tagName, type: e.type || '', editable: ['INPUT','TEXTAREA'].includes(e.tagName) || e.isContentEditable};
+        return {x, y, tag: e.tagName, type: e.type || '', editable: textField(e)};
       }`,
+      editableCover,
     );
   }
 
@@ -464,13 +494,14 @@ export class AxHelpers {
     });
   }
 
-  async fill(target: Target, text: string, options: { enter?: boolean } = {}) {
+  async fill(target: Target, text: string, options: { enter?: boolean; pick?: string } = {}) {
     if (typeof text !== 'string') throw new Error('fill needs an exact string.');
     return this.act('fill', target, async () => {
       const { page, node } = await this.resolve('fill', target);
-      const p = await this.point(page, node.id);
+      const p = await this.point(page, node.id, true);
       const entry = this.history.at(-1)!;
       entry.status = 'attempted';
+      let typedInto = node.id;
       if (
         p.tag === 'INPUT' &&
         ['date', 'time', 'datetime-local', 'month', 'week'].includes(p.type)
@@ -483,7 +514,14 @@ export class AxHelpers {
         );
       } else {
         await page.clickAt(p.x, p.y);
-        await page.cdp('DOM.focus', { backendNodeId: node.id }).catch(() => {});
+        // Comboboxes often move focus to their own overlay input on click; type there, not into the hidden original.
+        const moved = await this.onNode<boolean>(
+          page,
+          node.id,
+          `function(){const e=this.nodeType===1?this:this.parentElement;let a=document.activeElement;while(a&&a.shadowRoot&&a.shadowRoot.activeElement)a=a.shadowRoot.activeElement;return !!a&&a!==e&&!e.contains(a)&&(['INPUT','TEXTAREA'].includes(a.tagName)||a.isContentEditable);}`,
+        ).catch(() => false);
+        if (moved) typedInto = 0;
+        else await page.cdp('DOM.focus', { backendNodeId: node.id }).catch(() => {});
         await page.cdp('Input.dispatchKeyEvent', {
           type: 'rawKeyDown',
           key: 'a',
@@ -502,18 +540,60 @@ export class AxHelpers {
         if (text === '') await this.key(page, 'Backspace');
         else await page.cdp('Input.insertText', { text });
       }
-      const actual = await this.onNode<string>(
-        page,
-        node.id,
-        `function(){const e=this.nodeType===1?this:this.parentElement;return e.isContentEditable?e.innerText:(e.value??'');}`,
+      const actual = await (
+        typedInto
+          ? this.onNode<string>(
+              page,
+              node.id,
+              `function(){const e=this.nodeType===1?this:this.parentElement;return e.isContentEditable?e.innerText:(e.value??'');}`,
+            )
+          : page.evaluate(() => {
+              let a = document.activeElement as HTMLInputElement | null;
+              while (a?.shadowRoot?.activeElement)
+                a = a.shadowRoot.activeElement as HTMLInputElement;
+              return a ? (a.isContentEditable ? a.innerText : (a.value ?? '')) : '';
+            })
       ).catch(() => undefined);
-      if (options.enter) await this.key(page, 'Enter');
+      const picked = options.pick ? await this.pickOption(page, text, options.pick) : undefined;
+      if (options.enter && !picked) await this.key(page, 'Enter');
       const mismatch = actual !== undefined && actual !== text && !options.enter;
       return {
         id: node.id,
-        detail: `${node.role} "${clip(node.name, 40)}" = ${JSON.stringify(clip(text, 60))}${mismatch ? ` (field now shows ${JSON.stringify(clip(actual ?? '', 60))}: autocomplete/format?)` : ''}${options.enter ? ' +Enter' : ''}`,
+        detail: `${node.role} "${clip(node.name, 40)}"${typedInto ? '' : ' (focused overlay input)'} = ${JSON.stringify(clip(text, 60))}${mismatch ? ` (field now shows ${JSON.stringify(clip(actual ?? '', 60))}: autocomplete/format?)` : ''}${picked ? ` -> picked ${picked}` : options.enter ? ' +Enter' : ''}`,
       };
     });
+  }
+
+  /** After typing into an autocomplete, click the suggestion with this exact name or unique name prefix. */
+  private async pickOption(page: Page, typed: string, want: string) {
+    const deadline = Date.now() + 4000;
+    for (;;) {
+      const options = (await this.nodes(page)).nodes.filter(
+        (n) => SUGGESTIONS.has(n.role) && n.name,
+      );
+      let hit = options.filter((n) => norm(n.name) === norm(want));
+      if (!hit.length) hit = options.filter((n) => norm(n.name).startsWith(norm(want)));
+      if (hit.length > 1)
+        throw new Error(
+          `AMBIGUOUS pick "${want}":\n${hit.slice(0, 8).map(brief).join('\n')}\nPass a longer name.`,
+        );
+      if (hit.length === 1) {
+        const q = await this.point(page, hit[0]!.id);
+        await page.clickAt(q.x, q.y);
+        return brief(hit[0]!);
+      }
+      if (Date.now() > deadline)
+        throw new Error(
+          `PICK_NOT_FOUND: typed ${JSON.stringify(typed)} but no suggestion named "${want}". Suggestions: ${
+            options
+              .filter((n) => n.role === 'option')
+              .slice(0, 8)
+              .map(brief)
+              .join('; ') || 'none'
+          }`,
+        );
+      await delay(150);
+    }
   }
 
   async select(target: Target, option: string) {
