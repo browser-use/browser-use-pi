@@ -18,17 +18,52 @@ type RawAX = {
 };
 
 const ROLES: Record<Op, Set<string>> = {
-  fill: new Set(['textbox', 'searchbox', 'combobox', 'spinbutton', 'Date', 'DateTime', 'InputTime']),
+  fill: new Set([
+    'textbox',
+    'searchbox',
+    'combobox',
+    'spinbutton',
+    'Date',
+    'DateTime',
+    'InputTime',
+  ]),
   click: new Set([
-    'button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'menuitemcheckbox',
-    'menuitemradio', 'option', 'combobox', 'treeitem', 'gridcell', 'row', 'listitem', 'img',
-    'StaticText', 'cell', 'heading', 'textbox', 'searchbox',
+    'button',
+    'link',
+    'checkbox',
+    'radio',
+    'switch',
+    'tab',
+    'menuitem',
+    'menuitemcheckbox',
+    'menuitemradio',
+    'option',
+    'combobox',
+    'treeitem',
+    'gridcell',
+    'row',
+    'listitem',
+    'img',
+    'StaticText',
+    'cell',
+    'heading',
+    'textbox',
+    'searchbox',
   ]),
   select: new Set(['combobox', 'listbox']),
   check: new Set(['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio']),
 };
-const CONTROLS = new Set([...ROLES.fill, ...ROLES.select, ...ROLES.check,
-  'button', 'link', 'tab', 'menuitem', 'option', 'slider']);
+const CONTROLS = new Set([
+  ...ROLES.fill,
+  ...ROLES.select,
+  ...ROLES.check,
+  'button',
+  'link',
+  'tab',
+  'menuitem',
+  'option',
+  'slider',
+]);
 const KEYS: Record<string, { code: string; key: string; keyCode: number; text?: string }> = {
   Enter: { code: 'Enter', key: 'Enter', keyCode: 13, text: '\r' },
   Tab: { code: 'Tab', key: 'Tab', keyCode: 9 },
@@ -38,7 +73,11 @@ const KEYS: Record<string, { code: string; key: string; keyCode: number; text?: 
   PageDown: { code: 'PageDown', key: 'PageDown', keyCode: 34 },
   Backspace: { code: 'Backspace', key: 'Backspace', keyCode: 8 },
 };
-const norm = (s: unknown) => String(s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+const norm = (s: unknown) =>
+  String(s ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const brief = (n: AXNode) =>
   `#${n.id} ${n.role} "${clip(n.name, 60)}"${n.value !== undefined ? ` value="${clip(n.value, 40)}"` : ''}${n.checked !== undefined ? ` checked=${n.checked}` : ''}${n.expanded !== undefined ? ` expanded=${n.expanded}` : ''}${n.disabled ? ' disabled' : ''}`;
@@ -71,11 +110,29 @@ const SILENT = Symbol.for('nodejs.util.inspect.custom');
 
 /** Fast, strict accessibility-tree helpers for the persistent REPL. Raw page/CDP stays available. */
 export class AxHelpers {
-  readonly history: { op: string; target: unknown; status: string; id?: number | undefined; ms?: number }[] = [];
+  readonly history: {
+    op: string;
+    target: unknown;
+    status: string;
+    id?: number | undefined;
+    ms?: number;
+  }[] = [];
   /** Set by mutations; the worker prints a fresh compact state after such a cell. */
   dirty = false;
   private busy = false;
-  private jobs = new Map<string, { name: string; promise: Promise<unknown>; log: string[]; seen: number; done: boolean; value?: unknown; error?: string | undefined; started: number }>();
+  private jobs = new Map<
+    string,
+    {
+      name: string;
+      promise: Promise<unknown>;
+      log: string[];
+      seen: number;
+      done: boolean;
+      value?: unknown;
+      error?: string | undefined;
+      started: number;
+    }
+  >();
   private mapCount = 0;
   private at() {
     return this.options.stamp ? ` at ${new Date().toISOString().slice(0, 19)}Z` : '';
@@ -93,7 +150,10 @@ export class AxHelpers {
   private inflight = new Map<string, Map<string, number>>();
   private lastNet = new Map<string, number>();
   private tracked = new Set<string>();
-  private seenRequests = new Map<string, { url: string; type: string; method: string; status?: number; mime?: string; at: number }[]>();
+  private seenRequests = new Map<
+    string,
+    { url: string; type: string; method: string; status?: number; mime?: string; at: number }[]
+  >();
 
   /** Track in-flight requests per page session from CDP Network events (no page patching). */
   private async trackNetwork(page: Page) {
@@ -109,16 +169,30 @@ export class AxHelpers {
         const log = this.seenRequests.get(session) ?? [];
         this.seenRequests.set(session, log);
         if (method === 'Network.requestWillBeSent') {
-          const p = raw as { requestId: string; type?: string; request: { url: string; method: string } };
-          if (!['WebSocket', 'EventSource', 'Media', 'Ping', 'Manifest'].includes(params.type ?? '')) map.set(params.requestId, Date.now());
+          const p = raw as {
+            requestId: string;
+            type?: string;
+            request: { url: string; method: string };
+          };
+          if (
+            !['WebSocket', 'EventSource', 'Media', 'Ping', 'Manifest'].includes(params.type ?? '')
+          )
+            map.set(params.requestId, Date.now());
           if (['XHR', 'Fetch', 'Document'].includes(p.type ?? '') && log.length < 2000)
-            log.push({ url: p.request.url, type: p.type ?? '', method: p.request.method, at: Date.now(), id: p.requestId } as never);
+            log.push({
+              url: p.request.url,
+              type: p.type ?? '',
+              method: p.request.method,
+              at: Date.now(),
+              id: p.requestId,
+            } as never);
         } else if (method === 'Network.responseReceived') {
           const p = raw as { requestId: string; response: { status: number; mimeType: string } };
           const hit = log.find((r) => (r as unknown as { id: string }).id === p.requestId);
-          if (hit) (hit.status = p.response.status), (hit.mime = p.response.mimeType);
+          if (hit) ((hit.status = p.response.status), (hit.mime = p.response.mimeType));
           return;
-        } else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') map.delete(params.requestId);
+        } else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed')
+          map.delete(params.requestId);
         else return;
         this.lastNet.set(session, Date.now());
       };
@@ -149,15 +223,27 @@ export class AxHelpers {
           if (!w.__buObs) {
             w.__buLast = performance.now();
             w.__buObs = new MutationObserver(() => (w.__buLast = performance.now()));
-            w.__buObs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+            w.__buObs.observe(document, {
+              subtree: true,
+              childList: true,
+              attributes: true,
+              characterData: true,
+            });
           }
           return { idle: performance.now() - w.__buLast, ready: document.readyState };
         });
         const now = Date.now();
         probe.idle = Math.min(probe.idle, now - start); // quiet must be observed after this action began
-        const pending = session ? [...(this.inflight.get(session)?.values() ?? [])].filter((t) => now - t < 1500).length : 0;
+        const pending = session
+          ? [...(this.inflight.get(session)?.values() ?? [])].filter((t) => now - t < 1500).length
+          : 0;
         const netIdle = session ? now - (this.lastNet.get(session) ?? 0) : quiet;
-        if (probe.ready !== 'loading' && probe.idle >= quiet && pending === 0 && netIdle >= Math.min(quiet, 150))
+        if (
+          probe.ready !== 'loading' &&
+          probe.idle >= quiet &&
+          pending === 0 &&
+          netIdle >= Math.min(quiet, 150)
+        )
           return { why: 'quiet', ready: probe.ready, ms: now - start };
       } catch (error) {
         if (!isContextLoss(error)) throw error; // navigation in progress: wait for the new document
@@ -181,7 +267,9 @@ export class AxHelpers {
   /** Compact state: URL, title, interactive controls (ids usable as targets), visible text summary. */
   async state(options: { max?: number; text?: number; print?: boolean } = {}) {
     const snap = await this.nodes();
-    const all = snap.nodes.filter((n) => CONTROLS.has(n.role) && (n.name || n.value !== undefined || n.role !== 'link'));
+    const all = snap.nodes.filter(
+      (n) => CONTROLS.has(n.role) && (n.name || n.value !== undefined || n.role !== 'link'),
+    );
     const seen = new Set<string>();
     const controls = all.filter((n) => {
       const key = `${n.role}|${n.name}|${n.value ?? ''}`;
@@ -218,7 +306,11 @@ export class AxHelpers {
     const q = norm(query);
     const snap = await this.nodes();
     const hits = snap.nodes
-      .filter((n) => (CONTROLS.has(n.role) || n.role === 'StaticText' || n.role === 'heading') && (!options.role || n.role === options.role))
+      .filter(
+        (n) =>
+          (CONTROLS.has(n.role) || n.role === 'StaticText' || n.role === 'heading') &&
+          (!options.role || n.role === options.role),
+      )
       .filter((n) => norm(n.name).includes(q) || norm(n.value).includes(q))
       .slice(0, options.max ?? 25);
     this.log(`[find "${query}"${this.at()}] ${hits.length} hit(s)\n${hits.map(brief).join('\n')}`);
@@ -236,11 +328,15 @@ export class AxHelpers {
     if (typeof target === 'number') {
       matches = snap.nodes.filter((n) => n.id === target);
       label = `#${target}`;
-      if (!matches.length) throw new Error(`STALE: no node #${target} on the current page (${snap.url}). Get fresh ids with bu.state() or bu.find().`);
+      if (!matches.length)
+        throw new Error(
+          `STALE: no node #${target} on the current page (${snap.url}). Get fresh ids with bu.state() or bu.find().`,
+        );
     } else {
       const name = typeof target === 'string' ? target : target.name;
       const role = typeof target === 'string' ? undefined : target.role;
-      if (typeof name !== 'string' || !name.trim()) throw new Error('Target must be an id, an exact accessible name, or {name, role}.');
+      if (typeof name !== 'string' || !name.trim())
+        throw new Error('Target must be an id, an exact accessible name, or {name, role}.');
       label = `"${name}"${role ? ` (${role})` : ''}`;
       matches = usable.filter((n) => norm(n.name) === norm(name) && (!role || n.role === role));
       const enabled = matches.filter((n) => !n.disabled);
@@ -249,16 +345,18 @@ export class AxHelpers {
       const strong = matches.filter((n) => CONTROLS.has(n.role));
       if (strong.length) matches = strong;
       if (!matches.length) {
-        const words = norm(name).split(' ').filter((w) => w.length > 2);
-        const near = usable
-          .filter((n) => words.some((w) => norm(n.name).includes(w)))
-          .slice(0, 8);
+        const words = norm(name)
+          .split(' ')
+          .filter((w) => w.length > 2);
+        const near = usable.filter((n) => words.some((w) => norm(n.name).includes(w))).slice(0, 8);
         throw new Error(
           `NOT_FOUND: no ${op}-able control named ${label}. ${near.length ? `Candidates:\n${near.map(brief).join('\n')}` : 'No similar names; inspect with bu.state()/bu.find().'}\nPass an id or the exact name. Nothing was executed.`,
         );
       }
       if (matches.length > 1)
-        throw new Error(`AMBIGUOUS: ${matches.length} controls named ${label}:\n${matches.slice(0, 10).map(brief).join('\n')}\nPass the id. Nothing was executed.`);
+        throw new Error(
+          `AMBIGUOUS: ${matches.length} controls named ${label}:\n${matches.slice(0, 10).map(brief).join('\n')}\nPass the id. Nothing was executed.`,
+        );
     }
     return { page, node: matches[0]!, url: snap.url };
   }
@@ -268,11 +366,16 @@ export class AxHelpers {
     if (!object.objectId) throw new Error('Node unavailable.');
     try {
       const response = await page.cdp('Runtime.callFunctionOn', {
-        objectId: object.objectId, functionDeclaration: fn, arguments: [{ value: argument }],
-        returnByValue: true, awaitPromise: true,
+        objectId: object.objectId,
+        functionDeclaration: fn,
+        arguments: [{ value: argument }],
+        returnByValue: true,
+        awaitPromise: true,
       });
       if (response.exceptionDetails)
-        throw new Error(response.exceptionDetails.exception?.description ?? 'Node operation failed.');
+        throw new Error(
+          response.exceptionDetails.exception?.description ?? 'Node operation failed.',
+        );
       return response.result.value as T;
     } finally {
       await page.cdp('Runtime.releaseObject', { objectId: object.objectId }).catch(() => {});
@@ -283,7 +386,8 @@ export class AxHelpers {
   private async point(page: Page, id: number) {
     await page.cdp('DOM.scrollIntoViewIfNeeded', { backendNodeId: id }).catch(() => {});
     return this.onNode<{ x: number; y: number; tag: string; type: string; editable: boolean }>(
-      page, id,
+      page,
+      id,
       `function() {
         const e = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;
         if (!e || !e.isConnected) throw Error('Target detached');
@@ -299,7 +403,15 @@ export class AxHelpers {
     );
   }
 
-  private async act<T>(op: string, target: unknown, body: () => Promise<{ id?: number | undefined; detail?: string | undefined; value?: T | undefined }>) {
+  private async act<T>(
+    op: string,
+    target: unknown,
+    body: () => Promise<{
+      id?: number | undefined;
+      detail?: string | undefined;
+      value?: T | undefined;
+    }>,
+  ) {
     if (this.busy) throw new Error('Await bu actions sequentially; no concurrent mutations.');
     this.busy = true;
     const started = Date.now();
@@ -311,11 +423,24 @@ export class AxHelpers {
       entry.status = 'completed';
       this.dirty = true;
       const settled = await this.settle();
-      const info = await this.page().info().catch(() => ({ url: '?', title: '?' }));
+      const info = await this.page()
+        .info()
+        .catch(() => ({ url: '?', title: '?' }));
       entry.ms = Date.now() - started;
-      this.log(`[ok${this.at()}] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}`);
-      const out = { ok: true, op, id, url: info.url, title: info.title, settled, ...(value !== undefined ? { value } : {}) };
-      if (this.options.quietEcho) Object.defineProperty(out, SILENT, { value: () => '(ok)', enumerable: false });
+      this.log(
+        `[ok${this.at()}] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}`,
+      );
+      const out = {
+        ok: true,
+        op,
+        id,
+        url: info.url,
+        title: info.title,
+        settled,
+        ...(value !== undefined ? { value } : {}),
+      };
+      if (this.options.quietEcho)
+        Object.defineProperty(out, SILENT, { value: () => '(ok)', enumerable: false });
       return out;
     } catch (error) {
       entry.status = entry.status === 'attempted' ? 'uncertain' : 'not_executed';
@@ -341,14 +466,18 @@ export class AxHelpers {
   private async status(page: Page) {
     for (let i = 0; i < 100; i++) {
       try {
-        return await page.evaluate(() => {
-          if (document.readyState === 'loading') return -1;
-          const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming & { responseStatus?: number };
-          return nav?.responseStatus ?? 0;
-        }).then((s) => {
-          if (s === -1) throw new Error('Cannot find context');
-          return s;
-        });
+        return await page
+          .evaluate(() => {
+            if (document.readyState === 'loading') return -1;
+            const nav = performance.getEntriesByType(
+              'navigation',
+            )[0] as PerformanceNavigationTiming & { responseStatus?: number };
+            return nav?.responseStatus ?? 0;
+          })
+          .then((s) => {
+            if (s === -1) throw new Error('Cannot find context');
+            return s;
+          });
       } catch (error) {
         if (!isContextLoss(error)) throw error;
         await delay(50);
@@ -375,20 +504,48 @@ export class AxHelpers {
       const p = await this.point(page, node.id);
       const entry = this.history.at(-1)!;
       entry.status = 'attempted';
-      if (p.tag === 'INPUT' && ['date', 'time', 'datetime-local', 'month', 'week'].includes(p.type)) {
-        await this.onNode(page, node.id, `function(v){const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;s.call(this,v);this.dispatchEvent(new Event('input',{bubbles:true}));this.dispatchEvent(new Event('change',{bubbles:true}));if(this.value!==v)throw Error('Invalid native date/time value; use its ISO format');}`, text);
+      if (
+        p.tag === 'INPUT' &&
+        ['date', 'time', 'datetime-local', 'month', 'week'].includes(p.type)
+      ) {
+        await this.onNode(
+          page,
+          node.id,
+          `function(v){const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;s.call(this,v);this.dispatchEvent(new Event('input',{bubbles:true}));this.dispatchEvent(new Event('change',{bubbles:true}));if(this.value!==v)throw Error('Invalid native date/time value; use its ISO format');}`,
+          text,
+        );
       } else {
         await page.clickAt(p.x, p.y);
         await page.cdp('DOM.focus', { backendNodeId: node.id }).catch(() => {});
-        await page.cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2, commands: ['selectAll'] });
-        await page.cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+        await page.cdp('Input.dispatchKeyEvent', {
+          type: 'rawKeyDown',
+          key: 'a',
+          code: 'KeyA',
+          windowsVirtualKeyCode: 65,
+          modifiers: 2,
+          commands: ['selectAll'],
+        });
+        await page.cdp('Input.dispatchKeyEvent', {
+          type: 'keyUp',
+          key: 'a',
+          code: 'KeyA',
+          windowsVirtualKeyCode: 65,
+          modifiers: 2,
+        });
         if (text === '') await this.key(page, 'Backspace');
         else await page.cdp('Input.insertText', { text });
       }
-      const actual = await this.onNode<string>(page, node.id, `function(){const e=this.nodeType===1?this:this.parentElement;return e.isContentEditable?e.innerText:(e.value??'');}`).catch(() => undefined);
+      const actual = await this.onNode<string>(
+        page,
+        node.id,
+        `function(){const e=this.nodeType===1?this:this.parentElement;return e.isContentEditable?e.innerText:(e.value??'');}`,
+      ).catch(() => undefined);
       if (options.enter) await this.key(page, 'Enter');
       const mismatch = actual !== undefined && actual !== text && !options.enter;
-      return { id: node.id, detail: `${node.role} "${clip(node.name, 40)}" = ${JSON.stringify(clip(text, 60))}${mismatch ? ` (field now shows ${JSON.stringify(clip(actual ?? '', 60))}: autocomplete/format?)` : ''}${options.enter ? ' +Enter' : ''}` };
+      return {
+        id: node.id,
+        detail: `${node.role} "${clip(node.name, 40)}" = ${JSON.stringify(clip(text, 60))}${mismatch ? ` (field now shows ${JSON.stringify(clip(actual ?? '', 60))}: autocomplete/format?)` : ''}${options.enter ? ' +Enter' : ''}`,
+      };
     });
   }
 
@@ -396,7 +553,9 @@ export class AxHelpers {
     return this.act('select', target, async () => {
       const { page, node } = await this.resolve('select', target);
       const entry = this.history.at(-1)!;
-      const result = await this.onNode<string>(page, node.id,
+      const result = await this.onNode<string>(
+        page,
+        node.id,
         `function(label){
           if (this.tagName !== 'SELECT') throw Error('Not a native <select>: click it, then click the option by name');
           const norm = s => String(s).trim().replace(/\\s+/g,' ').toLowerCase();
@@ -406,7 +565,9 @@ export class AxHelpers {
           this.value = hits[0].value; this.selectedIndex = hits[0].index;
           this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true}));
           return hits[0].label;
-        }`, option);
+        }`,
+        option,
+      );
       entry.status = 'attempted';
       return { id: node.id, detail: `"${clip(node.name, 40)}" = ${JSON.stringify(result)}` };
     });
@@ -426,9 +587,29 @@ export class AxHelpers {
   private async key(page: Page, name: string) {
     const k = KEYS[name];
     if (!k) throw new Error(`Unsupported key ${name}. Supported: ${Object.keys(KEYS).join(', ')}`);
-    await page.cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, nativeVirtualKeyCode: k.keyCode });
-    if (k.text) await page.cdp('Input.dispatchKeyEvent', { type: 'char', key: k.key, code: k.code, text: k.text, unmodifiedText: k.text, windowsVirtualKeyCode: k.keyCode });
-    await page.cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, nativeVirtualKeyCode: k.keyCode });
+    await page.cdp('Input.dispatchKeyEvent', {
+      type: 'rawKeyDown',
+      key: k.key,
+      code: k.code,
+      windowsVirtualKeyCode: k.keyCode,
+      nativeVirtualKeyCode: k.keyCode,
+    });
+    if (k.text)
+      await page.cdp('Input.dispatchKeyEvent', {
+        type: 'char',
+        key: k.key,
+        code: k.code,
+        text: k.text,
+        unmodifiedText: k.text,
+        windowsVirtualKeyCode: k.keyCode,
+      });
+    await page.cdp('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: k.key,
+      code: k.code,
+      windowsVirtualKeyCode: k.keyCode,
+      nativeVirtualKeyCode: k.keyCode,
+    });
   }
 
   async press(name: string) {
@@ -460,7 +641,9 @@ export class AxHelpers {
   }
 
   private async tree(page = this.page()) {
-    const { nodes } = (await page.cdp('Accessibility.getFullAXTree')) as unknown as { nodes: RawAX[] };
+    const { nodes } = (await page.cdp('Accessibility.getFullAXTree')) as unknown as {
+      nodes: RawAX[];
+    };
     const byId = new Map(nodes.map((n) => [n.nodeId, n]));
     return { nodes, byId, info: await page.info() };
   }
@@ -478,7 +661,7 @@ export class AxHelpers {
       const role = String(n.role?.value ?? '');
       if (role === 'StaticText' && !n.ignored) {
         const t = String(n.name?.value ?? '').trim();
-        if (t) out.push(t), (size += t.length);
+        if (t) (out.push(t), (size += t.length));
         return;
       }
       for (const c of n.childIds ?? []) walk(byId.get(c));
@@ -490,16 +673,28 @@ export class AxHelpers {
   private summarize(kind: string, rows: unknown[], extra = '') {
     const first = rows[0];
     const fields = first && typeof first === 'object' ? Object.keys(first as object) : [];
-    this.log(`[${kind}${this.at()}] ${rows.length} row(s)${fields.length ? `; fields: ${fields.join(', ')}` : ''}${extra}\n${rows.slice(0, 3).map((r) => clip(JSON.stringify(r), 300)).join('\n')}`);
+    this.log(
+      `[${kind}${this.at()}] ${rows.length} row(s)${fields.length ? `; fields: ${fields.join(', ')}` : ''}${extra}\n${rows
+        .slice(0, 3)
+        .map((r) => clip(JSON.stringify(r), 300))
+        .join('\n')}`,
+    );
   }
 
-  private pick(nodes: RawAX[], roles: Set<string>, which: number | string | undefined, byId: Map<string, RawAX>) {
+  private pick(
+    nodes: RawAX[],
+    roles: Set<string>,
+    which: number | string | undefined,
+    byId: Map<string, RawAX>,
+  ) {
     const all = nodes.filter((n) => !n.ignored && roles.has(String(n.role?.value ?? '')));
     if (typeof which === 'number') return all[which];
     if (typeof which === 'string') {
       const hit = all.filter((n) => norm(n.name?.value) === norm(which));
       if (hit.length === 1) return hit[0];
-      throw new Error(`${hit.length ? 'AMBIGUOUS' : 'NOT_FOUND'}: ${[...roles].join('/')} named "${which}". Available: ${JSON.stringify(all.slice(0, 15).map((n, i) => `${i}: ${String(n.name?.value ?? '') || AxHelpers.text(byId, n, 60)}`))}`);
+      throw new Error(
+        `${hit.length ? 'AMBIGUOUS' : 'NOT_FOUND'}: ${[...roles].join('/')} named "${which}". Available: ${JSON.stringify(all.slice(0, 15).map((n, i) => `${i}: ${String(n.name?.value ?? '') || AxHelpers.text(byId, n, 60)}`))}`,
+      );
     }
     return all;
   }
@@ -509,13 +704,39 @@ export class AxHelpers {
     const { nodes, byId, info } = await this.tree();
     let root = nodes[0];
     if (region) {
-      const regionRoles = new Set(['main', 'navigation', 'region', 'dialog', 'alertdialog', 'form', 'article', 'complementary', 'banner', 'contentinfo', 'search', 'section', 'table', 'list', 'group', 'tabpanel']);
-      const candidates = nodes.filter((n) => !n.ignored && regionRoles.has(String(n.role?.value ?? '')));
+      const regionRoles = new Set([
+        'main',
+        'navigation',
+        'region',
+        'dialog',
+        'alertdialog',
+        'form',
+        'article',
+        'complementary',
+        'banner',
+        'contentinfo',
+        'search',
+        'section',
+        'table',
+        'list',
+        'group',
+        'tabpanel',
+      ]);
+      const candidates = nodes.filter(
+        (n) => !n.ignored && regionRoles.has(String(n.role?.value ?? '')),
+      );
       const hit = candidates.filter((n) => norm(n.name?.value) === norm(region));
       const byRole = candidates.filter((n) => String(n.role?.value) === region);
       root = hit.length === 1 ? hit[0] : byRole.length >= 1 && !hit.length ? byRole[0] : undefined!;
       if (!root)
-        throw new Error(`${hit.length > 1 ? 'AMBIGUOUS' : 'NOT_FOUND'} region "${region}". Named regions: ${JSON.stringify(candidates.filter((n) => n.name?.value).slice(0, 20).map((n) => `${n.role?.value}: ${n.name?.value}`))}`);
+        throw new Error(
+          `${hit.length > 1 ? 'AMBIGUOUS' : 'NOT_FOUND'} region "${region}". Named regions: ${JSON.stringify(
+            candidates
+              .filter((n) => n.name?.value)
+              .slice(0, 20)
+              .map((n) => `${n.role?.value}: ${n.name?.value}`),
+          )}`,
+        );
     } else {
       root = nodes.find((n) => String(n.role?.value) === 'main' && !n.ignored) ?? nodes[0];
     }
@@ -526,14 +747,35 @@ export class AxHelpers {
       const role = String(n.role?.value ?? '');
       const name = String(n.name?.value ?? '').trim();
       if (!n.ignored) {
-        if (role === 'heading') return void lines.push(`## ${name || AxHelpers.text(byId, n, 200)}`);
+        if (role === 'heading')
+          return void lines.push(`## ${name || AxHelpers.text(byId, n, 200)}`);
         if (role === 'link') {
           const url = AxHelpers.prop(n, 'url');
           return void lines.push(`[${name || AxHelpers.text(byId, n, 200)}](${url ?? ''})`);
         }
         if (['button', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio'].includes(role))
-          return void lines.push(`<${role}${name ? ` "${name}"` : ''}${n.value?.value !== undefined ? ` = ${n.value.value}` : ''}>`);
-        if (['paragraph', 'listitem', 'row', 'cell', 'gridcell', 'term', 'definition', 'caption', 'blockquote', 'figcaption'].includes(role) && !(n.childIds ?? []).some((c) => ['link', 'heading', 'list', 'button', 'table'].includes(String(byId.get(c)?.role?.value)))) {
+          return void lines.push(
+            `<${role}${name ? ` "${name}"` : ''}${n.value?.value !== undefined ? ` = ${n.value.value}` : ''}>`,
+          );
+        if (
+          [
+            'paragraph',
+            'listitem',
+            'row',
+            'cell',
+            'gridcell',
+            'term',
+            'definition',
+            'caption',
+            'blockquote',
+            'figcaption',
+          ].includes(role) &&
+          !(n.childIds ?? []).some((c) =>
+            ['link', 'heading', 'list', 'button', 'table'].includes(
+              String(byId.get(c)?.role?.value),
+            ),
+          )
+        ) {
           const t = AxHelpers.text(byId, n, 600);
           if (t) lines.push(role === 'listitem' ? `- ${t}` : t);
           return;
@@ -545,7 +787,9 @@ export class AxHelpers {
     walk(root);
     const merged = lines.filter((l, i) => l !== lines[i - 1]);
     const shown = this.options.readLines ?? 25;
-    this.log(`[read${region ? ` ${region}` : ''}${this.at()}] ${merged.length} line(s) | ${info.url}\n${clip(merged.slice(0, shown).join('\n'), shown * 100)}${merged.length > shown ? `\n… ${merged.length - shown} more lines in the returned array` : ''}`);
+    this.log(
+      `[read${region ? ` ${region}` : ''}${this.at()}] ${merged.length} line(s) | ${info.url}\n${clip(merged.slice(0, shown).join('\n'), shown * 100)}${merged.length > shown ? `\n… ${merged.length - shown} more lines in the returned array` : ''}`,
+    );
     return merged;
   }
 
@@ -558,7 +802,10 @@ export class AxHelpers {
       this.log('[table] no table/grid on this page; use bu.list(), bu.read() or page.evaluate');
       return [];
     }
-    if (Array.isArray(found) && found.length > 1) this.log(`[table] ${found.length} tables; using the largest. Pass an index or name to choose.`);
+    if (Array.isArray(found) && found.length > 1)
+      this.log(
+        `[table] ${found.length} tables; using the largest. Pass an index or name to choose.`,
+      );
     const rowsOf = (t: RawAX) => {
       const rows: RawAX[] = [];
       const walk = (n: RawAX | undefined) => {
@@ -569,14 +816,19 @@ export class AxHelpers {
       walk(t);
       return rows;
     };
-    const table = tables.map((t) => ({ t, rows: rowsOf(t) })).sort((a, b) => b.rows.length - a.rows.length)[0]!;
+    const table = tables
+      .map((t) => ({ t, rows: rowsOf(t) }))
+      .sort((a, b) => b.rows.length - a.rows.length)[0]!;
     const cells = (row: RawAX) => {
       const out: { header: boolean; text: string }[] = [];
       const walk = (n: RawAX | undefined) => {
         if (!n) return;
         const role = String(n.role?.value ?? '');
         if (['cell', 'gridcell', 'columnheader', 'rowheader'].includes(role))
-          return void out.push({ header: role === 'columnheader', text: String(n.name?.value ?? '').trim() || AxHelpers.text(byId, n, 500) });
+          return void out.push({
+            header: role === 'columnheader',
+            text: String(n.name?.value ?? '').trim() || AxHelpers.text(byId, n, 500),
+          });
         for (const c of n.childIds ?? []) walk(byId.get(c));
       };
       walk(row);
@@ -587,7 +839,9 @@ export class AxHelpers {
     let rows: unknown[];
     if (headerRow >= 0) {
       const headers = matrix[headerRow]!.map((c, i) => c.text || `col${i + 1}`);
-      rows = matrix.slice(headerRow + 1).map((r) => Object.fromEntries(r.map((c, i) => [headers[i] ?? `col${i + 1}`, c.text])));
+      rows = matrix
+        .slice(headerRow + 1)
+        .map((r) => Object.fromEntries(r.map((c, i) => [headers[i] ?? `col${i + 1}`, c.text])));
     } else rows = matrix.map((r) => r.map((c) => c.text));
     this.summarize('table', rows);
     return rows;
@@ -599,8 +853,15 @@ export class AxHelpers {
     const found = this.pick(nodes, new Set(['list', 'feed', 'listbox', 'tree']), which, byId);
     const lists = Array.isArray(found) ? found : found ? [found] : [];
     const itemsOf = (l: RawAX) =>
-      (l.childIds ?? []).map((c) => byId.get(c)).filter((n): n is RawAX => !!n && ['listitem', 'article', 'option', 'treeitem'].includes(String(n.role?.value)));
-    const best = lists.map((l) => ({ l, items: itemsOf(l) })).sort((a, b) => b.items.length - a.items.length)[0];
+      (l.childIds ?? [])
+        .map((c) => byId.get(c))
+        .filter(
+          (n): n is RawAX =>
+            !!n && ['listitem', 'article', 'option', 'treeitem'].includes(String(n.role?.value)),
+        );
+    const best = lists
+      .map((l) => ({ l, items: itemsOf(l) }))
+      .sort((a, b) => b.items.length - a.items.length)[0];
     if (!best?.items.length) {
       this.log('[list] no list items found; use bu.read() or page.evaluate');
       return [];
@@ -618,7 +879,11 @@ export class AxHelpers {
       walk(item);
       return { text: AxHelpers.text(byId, item, 800), links: links.slice(0, 5) };
     });
-    this.summarize('list', rows, lists.length > 1 && typeof which === 'undefined' ? ` (largest of ${lists.length} lists)` : '');
+    this.summarize(
+      'list',
+      rows,
+      lists.length > 1 && typeof which === 'undefined' ? ` (largest of ${lists.length} lists)` : '',
+    );
     return rows;
   }
 
@@ -627,10 +892,18 @@ export class AxHelpers {
     if (this.options.domLinks) {
       const f = filter ? norm(filter) : '';
       const all = await this.page().evaluate(() =>
-        Array.from(document.querySelectorAll('a[href]')).map((a) => ({ name: (a.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 200), url: (a as HTMLAnchorElement).href })));
+        Array.from(document.querySelectorAll('a[href]')).map((a) => ({
+          name: (a.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 200),
+          url: (a as HTMLAnchorElement).href,
+        })),
+      );
       const seen = new Set<string>();
       const rows = all
-        .filter((l) => /^https?:/.test(l.url) && (!f || norm(l.name).includes(f) || l.url.toLowerCase().includes(f)))
+        .filter(
+          (l) =>
+            /^https?:/.test(l.url) &&
+            (!f || norm(l.name).includes(f) || l.url.toLowerCase().includes(f)),
+        )
         .filter((l) => (seen.has(l.url + l.name) ? false : (seen.add(l.url + l.name), true)));
       this.summarize('links', rows);
       return rows;
@@ -640,7 +913,10 @@ export class AxHelpers {
     const seen = new Set<string>();
     const rows = nodes
       .filter((n) => !n.ignored && String(n.role?.value) === 'link')
-      .map((n) => ({ name: String(n.name?.value ?? '').trim(), url: String(AxHelpers.prop(n, 'url') ?? '') }))
+      .map((n) => ({
+        name: String(n.name?.value ?? '').trim(),
+        url: String(AxHelpers.prop(n, 'url') ?? ''),
+      }))
       .filter((l) => l.url && (!f || norm(l.name).includes(f) || l.url.toLowerCase().includes(f)))
       .filter((l) => (seen.has(l.url + l.name) ? false : (seen.add(l.url + l.name), true)));
     this.summarize('links', rows);
@@ -655,19 +931,43 @@ export class AxHelpers {
   async map<T>(
     urls: string[],
     extract?: ((...args: never[]) => T) | string,
-    options: { concurrency?: number; perHost?: number; minGapMs?: number; mode?: 'tab' | 'fetch' | 'remote'; retries?: number; timeoutMs?: number; save?: string; progress?: (line: string) => void } = {},
+    options: {
+      concurrency?: number;
+      perHost?: number;
+      minGapMs?: number;
+      mode?: 'tab' | 'fetch' | 'remote';
+      retries?: number;
+      timeoutMs?: number;
+      save?: string;
+      progress?: (line: string) => void;
+    } = {},
   ) {
-    if (!Array.isArray(urls) || !urls.every((u) => typeof u === 'string')) throw new Error('map needs an array of URL strings.');
-    const concurrency = Math.max(1, Math.min(options.concurrency ?? this.options.mapConcurrency ?? 6, 12));
+    if (!Array.isArray(urls) || !urls.every((u) => typeof u === 'string'))
+      throw new Error('map needs an array of URL strings.');
+    const concurrency = Math.max(
+      1,
+      Math.min(options.concurrency ?? this.options.mapConcurrency ?? 6, 12),
+    );
     const perHost = Math.max(1, options.perHost ?? 2);
     const minGap = options.minGapMs ?? 250;
     const retries = options.retries ?? 2;
     const timeoutMs = options.timeoutMs ?? 25000;
     const mode = options.mode ?? 'tab';
     // Scratch under the host journal dir so partial results never masquerade as deliverables.
-    const file = join(this.workspace, '.browser-use', options.save ?? `bu-map-${++this.mapCount}.json`);
+    const file = join(
+      this.workspace,
+      '.browser-use',
+      options.save ?? `bu-map-${++this.mapCount}.json`,
+    );
     await mkdir(join(this.workspace, '.browser-use'), { recursive: true }).catch(() => {});
-    const results: { url: string; ok: boolean; status?: number; value?: unknown; error?: string; observedAt?: string }[] = new Array(urls.length);
+    const results: {
+      url: string;
+      ok: boolean;
+      status?: number;
+      value?: unknown;
+      error?: string;
+      observedAt?: string;
+    }[] = new Array(urls.length);
     const active = new Map<string, number>();
     const lastStart = new Map<string, number>();
     const started = Date.now();
@@ -675,32 +975,56 @@ export class AxHelpers {
     let done = 0;
     const say = options.progress ?? ((l: string) => this.log(l));
     const host = (u: string) => {
-      try { return new URL(u).host; } catch { return ''; }
+      try {
+        return new URL(u).host;
+      } catch {
+        return '';
+      }
     };
     const one = async (url: string) => {
       const h = host(url);
       for (let attempt = 0; ; attempt++) {
-        while ((active.get(h) ?? 0) >= perHost || Date.now() - (lastStart.get(h) ?? 0) < minGap) await delay(25);
+        while ((active.get(h) ?? 0) >= perHost || Date.now() - (lastStart.get(h) ?? 0) < minGap)
+          await delay(25);
         active.set(h, (active.get(h) ?? 0) + 1);
         lastStart.set(h, Date.now());
         try {
-          const r = mode === 'remote' ? await this.remoteOne(url, extract, timeoutMs) : mode === 'fetch' ? await this.fetchOne(url, extract, timeoutMs) : await this.tabOne(url, extract, timeoutMs);
+          const r =
+            mode === 'remote'
+              ? await this.remoteOne(url, extract, timeoutMs)
+              : mode === 'fetch'
+                ? await this.fetchOne(url, extract, timeoutMs)
+                : await this.tabOne(url, extract, timeoutMs);
           if ((r.status === 429 || r.status === 503) && attempt < retries) {
             const wait = Math.min(30000, (r.retryAfter ?? 2 ** attempt * 2) * 1000);
-            say(`[map] ${h} http ${r.status}; backing off ${Math.round(wait / 1000)}s (attempt ${attempt + 1}/${retries})`);
+            say(
+              `[map] ${h} http ${r.status}; backing off ${Math.round(wait / 1000)}s (attempt ${attempt + 1}/${retries})`,
+            );
             await delay(wait);
             continue;
           }
-          return { url, ok: r.status === 0 || (r.status >= 200 && r.status < 400), status: r.status, value: r.value, ...(this.options.stamp ? { observedAt: new Date().toISOString() } : {}) };
+          return {
+            url,
+            ok: r.status === 0 || (r.status >= 200 && r.status < 400),
+            status: r.status,
+            value: r.value,
+            ...(this.options.stamp ? { observedAt: new Date().toISOString() } : {}),
+          };
         } catch (error) {
-          if (attempt < retries && /timeout|net::ERR|ECONNRESET|fetch failed/i.test(String(error))) continue;
-          return { url, ok: false, error: clip(error instanceof Error ? error.message : String(error), 300) };
+          if (attempt < retries && /timeout|net::ERR|ECONNRESET|fetch failed/i.test(String(error)))
+            continue;
+          return {
+            url,
+            ok: false,
+            error: clip(error instanceof Error ? error.message : String(error), 300),
+          };
         } finally {
           active.set(h, (active.get(h) ?? 1) - 1);
         }
       }
     };
-    const flush = () => writeFile(file, JSON.stringify(results.filter(Boolean), null, 1)).catch(() => {});
+    const flush = () =>
+      writeFile(file, JSON.stringify(results.filter(Boolean), null, 1)).catch(() => {});
     const step = Math.max(1, Math.ceil(urls.length / 10));
     await Promise.all(
       Array.from({ length: Math.min(concurrency, urls.length) }, async () => {
@@ -710,7 +1034,9 @@ export class AxHelpers {
           done++;
           if (done % step === 0 || done === urls.length) {
             const ok = results.filter((r) => r?.ok).length;
-            say(`[map] ${done}/${urls.length} done, ${ok} ok, ${done - ok} failed, ${((Date.now() - started) / 1000).toFixed(1)}s`);
+            say(
+              `[map] ${done}/${urls.length} done, ${ok} ok, ${done - ok} failed, ${((Date.now() - started) / 1000).toFixed(1)}s`,
+            );
             await flush();
           }
         }
@@ -718,26 +1044,43 @@ export class AxHelpers {
     );
     await flush();
     const failed = results.filter((r) => !r.ok);
-    this.summarize('map', results.filter((r) => r.ok).map((r) => r.value), `; ${failed.length} failed${failed.length ? ` e.g. ${clip(JSON.stringify(failed.slice(0, 2)), 300)}` : ''}; saved ${file}`);
+    this.summarize(
+      'map',
+      results.filter((r) => r.ok).map((r) => r.value),
+      `; ${failed.length} failed${failed.length ? ` e.g. ${clip(JSON.stringify(failed.slice(0, 2)), 300)}` : ''}; saved ${file}`,
+    );
     return results;
   }
 
   private async fetchOne(url: string, extract: unknown, timeoutMs: number) {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36', accept: 'text/html,application/json;q=0.9,*/*;q=0.8' },
+      headers: {
+        'user-agent':
+          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36',
+        accept: 'text/html,application/json;q=0.9,*/*;q=0.8',
+      },
       redirect: 'follow',
     });
     const retryAfter = Number(response.headers.get('retry-after')) || undefined;
     const text = await response.text();
-    const value = typeof extract === 'function' ? await (extract as (t: string, m: object) => unknown)(text, { url, status: response.status }) : text.slice(0, 20000);
+    const value =
+      typeof extract === 'function'
+        ? await (extract as (t: string, m: object) => unknown)(text, {
+            url,
+            status: response.status,
+          })
+        : text.slice(0, 20000);
     return { status: response.status, value, retryAfter };
   }
 
   private async remoteOne(url: string, extract: unknown, timeoutMs: number) {
     const r = await this.remoteFetch(url, timeoutMs);
     if (r.error && !r.status) throw new Error(r.error);
-    const value = typeof extract === 'function' ? await (extract as (t: string, m: object) => unknown)(r.text, { url, status: r.status }) : r.text.slice(0, 20000);
+    const value =
+      typeof extract === 'function'
+        ? await (extract as (t: string, m: object) => unknown)(r.text, { url, status: r.status })
+        : r.text.slice(0, 20000);
     return { status: r.status, value, retryAfter: undefined as number | undefined };
   }
 
@@ -747,14 +1090,22 @@ export class AxHelpers {
     try {
       const nav = await Promise.race([
         page.cdp('Page.navigate', { url }),
-        delay(timeoutMs).then(() => { throw new Error(`timeout after ${timeoutMs}ms`); }),
+        delay(timeoutMs).then(() => {
+          throw new Error(`timeout after ${timeoutMs}ms`);
+        }),
       ]);
-      if ((nav as { errorText?: string }).errorText) throw new Error(`Navigation failed: ${(nav as { errorText?: string }).errorText}`);
+      if ((nav as { errorText?: string }).errorText)
+        throw new Error(`Navigation failed: ${(nav as { errorText?: string }).errorText}`);
       const status = await this.status(page);
       await this.settle({ capMs: 1500, page });
       let value: unknown;
-      if (typeof extract === 'function' || typeof extract === 'string') value = await page.evaluate(extract as string);
-      else value = await page.evaluate(() => ({ title: document.title, text: (document.body?.innerText ?? '').slice(0, 4000) }));
+      if (typeof extract === 'function' || typeof extract === 'string')
+        value = await page.evaluate(extract as string);
+      else
+        value = await page.evaluate(() => ({
+          title: document.title,
+          text: (document.body?.innerText ?? '').slice(0, 4000),
+        }));
       return { status, value, retryAfter: undefined as number | undefined };
     } finally {
       await page.close().catch(() => {});
@@ -765,17 +1116,42 @@ export class AxHelpers {
   async fetch(url: string, options: { timeoutMs?: number; print?: boolean } = {}) {
     if (!this.options.fetchProxy) throw new Error('bu.fetch is not enabled in this session.');
     const r = await this.remoteFetch(url, options.timeoutMs ?? 30000);
-    if (options.print !== false) this.log(`[fetch${this.at()}] ${url} -> ${r.status} ${r.contentType} ${r.text.length} chars${r.error ? ` error: ${r.error}` : ''}\n${clip(r.text.replace(/\s+/g, ' '), 300)}`);
+    if (options.print !== false)
+      this.log(
+        `[fetch${this.at()}] ${url} -> ${r.status} ${r.contentType} ${r.text.length} chars${r.error ? ` error: ${r.error}` : ''}\n${clip(r.text.replace(/\s+/g, ' '), 300)}`,
+      );
     return r;
   }
 
   private async remoteFetch(url: string, timeoutMs: number) {
-    const response = await fetch(this.options.fetchProxy!, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url, timeout_ms: timeoutMs }), signal: AbortSignal.timeout(timeoutMs + 20000) });
-    const d = (await response.json()) as { status_code?: number; body?: string; body_base64?: string; is_binary?: boolean; headers?: Record<string, string[]>; error?: string };
-    const contentType = Object.entries(d.headers ?? {}).find(([k]) => k.toLowerCase() === 'content-type')?.[1]?.[0] ?? '';
-    const text = d.is_binary && d.body_base64 ? Buffer.from(d.body_base64, 'base64').toString('utf8') : (d.body ?? '');
-    return { url, status: d.status_code ?? (d.error ? 0 : response.status), contentType, text, ...(d.error ? { error: d.error } : {}) };
+    const response = await fetch(this.options.fetchProxy!, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url, timeout_ms: timeoutMs }),
+      signal: AbortSignal.timeout(timeoutMs + 20000),
+    });
+    const d = (await response.json()) as {
+      status_code?: number;
+      body?: string;
+      body_base64?: string;
+      is_binary?: boolean;
+      headers?: Record<string, string[]>;
+      error?: string;
+    };
+    const contentType =
+      Object.entries(d.headers ?? {}).find(([k]) => k.toLowerCase() === 'content-type')?.[1]?.[0] ??
+      '';
+    const text =
+      d.is_binary && d.body_base64
+        ? Buffer.from(d.body_base64, 'base64').toString('utf8')
+        : (d.body ?? '');
+    return {
+      url,
+      status: d.status_code ?? (d.error ? 0 : response.status),
+      contentType,
+      text,
+      ...(d.error ? { error: d.error } : {}),
+    };
   }
 
   /** Data requests (XHR/fetch/document) this tab made since tracking began: find the JSON/API behind a page. */
@@ -786,15 +1162,30 @@ export class AxHelpers {
       .filter((r) => !f || r.url.toLowerCase().includes(f) || (r.mime ?? '').includes(f))
       .map(({ url, type, method, status, mime }) => ({ url, type, method, status, mime }))
       .slice(-(options.max ?? 60));
-    this.summarize('requests', rows, ' (fetch JSON ones directly: await page.evaluate(async u => (await fetch(u)).text(), url))');
+    this.summarize(
+      'requests',
+      rows,
+      ' (fetch JSON ones directly: await page.evaluate(async u => (await fetch(u)).text(), url))',
+    );
     return rows;
   }
 
   /** Start long work in the background; bu.wait(job) blocks for it with streamed progress. */
   job<T>(name: string, fn: (progress: (line: string) => void) => Promise<T>) {
     const id = `${name}-${this.jobs.size + 1}`;
-    const job = { name, log: [] as string[], seen: 0, done: false, started: Date.now(), promise: undefined as unknown as Promise<unknown>, value: undefined as unknown, error: undefined as string | undefined };
-    job.promise = fn((line) => job.log.push(`${((Date.now() - job.started) / 1000).toFixed(0)}s ${line}`))
+    const job = {
+      name,
+      log: [] as string[],
+      seen: 0,
+      done: false,
+      started: Date.now(),
+      promise: undefined as unknown as Promise<unknown>,
+      value: undefined as unknown,
+      error: undefined as string | undefined,
+    };
+    job.promise = fn((line) =>
+      job.log.push(`${((Date.now() - job.started) / 1000).toFixed(0)}s ${line}`),
+    )
       .then((v) => ((job.value = v), v))
       .catch((e) => ((job.error = e instanceof Error ? e.message : String(e)), undefined))
       .finally(() => (job.done = true));
@@ -810,7 +1201,9 @@ export class AxHelpers {
     await Promise.race([job.promise, delay(timeout)]);
     const fresh = job.log.slice(job.seen);
     job.seen = job.log.length;
-    this.log(`[job ${id}] ${job.done ? (job.error ? `failed: ${job.error}` : 'done') : `still running after ${((Date.now() - job.started) / 1000).toFixed(0)}s; call bu.wait again`}${fresh.length ? `\n${fresh.slice(-15).join('\n')}` : ''}`);
+    this.log(
+      `[job ${id}] ${job.done ? (job.error ? `failed: ${job.error}` : 'done') : `still running after ${((Date.now() - job.started) / 1000).toFixed(0)}s; call bu.wait again`}${fresh.length ? `\n${fresh.slice(-15).join('\n')}` : ''}`,
+    );
     return job.done ? { done: true, value: job.value, error: job.error } : { done: false };
   }
 }

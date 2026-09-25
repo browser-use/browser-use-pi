@@ -14,8 +14,8 @@ import type { DomainOptions, SensitiveData } from './policy.js';
 import type { BrowserOptions } from './browser.js';
 
 export interface BrowserUseOptions extends DomainOptions {
-  /** Optional structured actions and host-side semantic target resolver. Disabled by default. */
-  semantic?: import('./semantic-resolver.js').SemanticOptions;
+  /** Adds the `bu` AX helpers and their prompt to the JavaScript REPL. Disabled by default. */
+  semantic?: boolean;
   sensitiveData?: SensitiveData;
   /** Anonymous run counters. Disable with false, DO_NOT_TRACK=1 or ANONYMIZED_TELEMETRY=false. */
   telemetry?: boolean;

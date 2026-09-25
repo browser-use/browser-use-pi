@@ -15,7 +15,6 @@ import { redact } from './history.js';
 import { actionHighlighter } from './highlight.js';
 import { prepareModelImages } from './images.js';
 import { AxHelpers } from './ax.js';
-import type { ChoiceAnswer } from './semantic-resolver.js';
 
 // IPC initialization keeps connection details out of argv and environment.
 process.on('disconnect', () => process.exit(0));
@@ -42,10 +41,6 @@ function deferredPage(targetId?: string) {
   );
 }
 const page = deferredPage(config.targetId);
-const choiceWaiters = new Map<
-  string,
-  { resolve: (answer: ChoiceAnswer) => void; reject: (error: Error) => void }
->();
 let outputFile: string | undefined;
 let runId: string | undefined;
 let output = '';
@@ -306,13 +301,6 @@ async function evaluate(code: string, captureJson = false): Promise<string | und
 }
 
 process.on('message', async (message: WorkerRequest) => {
-  if (message.type === 'choice-result') {
-    const pending = choiceWaiters.get(message.id);
-    choiceWaiters.delete(message.id);
-    if (message.answer) pending?.resolve(message.answer);
-    else pending?.reject(new Error(message.error ?? 'Target resolution failed.'));
-    return;
-  }
   if (message.type === 'close') {
     browser.close();
     evaluator.disconnect();
@@ -355,7 +343,9 @@ process.on('message', async (message: WorkerRequest) => {
     const bu = Reflect.get(realm, 'bu') as AxHelpers | undefined;
     if (bu?.dirty && bu.options.autoState !== false) {
       bu.dirty = false;
-      await bu.state({ max: bu.options.autoMax ?? 40, text: bu.options.autoText ?? 800 }).catch((error: unknown) => sink.write(`[state unavailable: ${String(error)}]\n`));
+      await bu
+        .state({ max: bu.options.autoMax ?? 40, text: bu.options.autoText ?? 800 })
+        .catch((error: unknown) => sink.write(`[state unavailable: ${String(error)}]\n`));
     }
     active = false;
     browser.observeResponse = undefined;

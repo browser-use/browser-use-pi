@@ -38,16 +38,9 @@ export interface WorkerConfig extends importPolicy {
   maxOutputChars: number;
 }
 export type WorkerRequest =
-  | {
-      type: 'choice-result';
-      id: string;
-      answer?: import('./semantic-resolver.js').ChoiceAnswer;
-      error?: string;
-    }
   | { type: 'execute'; code: string; captureJson?: boolean; outputFile?: string; runId?: string }
   | { type: 'close' };
 export type WorkerResponse =
-  | { type: 'choice'; id: string; request: import('./semantic-resolver.js').ChoiceRequest }
   | { type: 'action'; action: BrowserAction }
   | { type: 'owned'; targetId: string }
   | { type: 'partial'; runId?: string; path: string; valueJson: string }
