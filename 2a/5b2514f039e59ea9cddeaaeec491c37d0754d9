@@ -1,0 +1,49 @@
+experiment/pi-ax.mjs
+  s_4bd8ed662096a6::t_0dbda8222722df 1-83
+experiment/short-prompt.mjs
+  s_4bd8ed662096a6::t_14ff9c8bb5a1c9 1-18
+src/agent.ts
+  s_4bd8ed662096a6::t_f75eac7bd3bd2a 18,209
+src/ax-prompt.ts
+  s_4bd8ed662096a6::t_e62e6afc9b3718 1-13
+src/ax.ts
+  s_4bd8ed662096a6::t_5224f49eb2e20c 1-816
+src/index.ts
+  s_4bd8ed662096a6::t_bc3d26c9b12b4c 37-43,150,170
+src/protocol.ts
+  s_4bd8ed662096a6::t_a1451aaff3924b 26-28,41-46,50
+src/runtime.ts
+  s_4bd8ed662096a6::t_ccbbcb10df1ff1 9,70,76,91-114,163-168,265-266
+src/semantic-resolver.ts
+  s_4bd8ed662096a6::t_f51c328d14f633 1-114
+src/semantic.ts
+  s_4bd8ed662096a6::t_c2c24adff93956 1-311
+src/types.ts
+  s_4bd8ed662096a6::t_b46246b22b1f32 17-18
+src/worker.ts
+  s_4bd8ed662096a6::t_3bbfd37afa1ddf 17-18,45-48,137-148,309-315,354-359
+test/ax-fetch.test.mjs
+  s_4bd8ed662096a6::t_fa4df153a74ae7 1-53
+test/ax-knobs.test.mjs
+  s_4bd8ed662096a6::t_59418e74d81b0e 1-36
+test/ax-requests.test.mjs
+  s_4bd8ed662096a6::t_94167c1cc67d59 1-37
+test/ax.test.mjs
+  s_4bd8ed662096a6::t_795ec76ddb0b11 1-161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2a5b2514f039e59ea9cddeaaeec491c37d0754d9",
+  "prompts": {},
+  "sessions": {
+    "s_4bd8ed662096a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76a213b-b710-4a4b-84c9-44a9fd5fec43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
