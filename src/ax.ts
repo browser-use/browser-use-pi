@@ -79,6 +79,9 @@ const KEYS: Record<string, { code: string; key: string; keyCode: number; text?: 
   Escape: { code: 'Escape', key: 'Escape', keyCode: 27 },
   ArrowDown: { code: 'ArrowDown', key: 'ArrowDown', keyCode: 40 },
   ArrowUp: { code: 'ArrowUp', key: 'ArrowUp', keyCode: 38 },
+  ArrowLeft: { code: 'ArrowLeft', key: 'ArrowLeft', keyCode: 37 },
+  ArrowRight: { code: 'ArrowRight', key: 'ArrowRight', keyCode: 39 },
+  Space: { code: 'Space', key: ' ', keyCode: 32, text: ' ' },
   PageDown: { code: 'PageDown', key: 'PageDown', keyCode: 34 },
   Backspace: { code: 'Backspace', key: 'Backspace', keyCode: 8 },
 };
@@ -107,7 +110,7 @@ export const AX_PROMPT = `
 
 Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
 - Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically, so you rarely need a separate look.
-- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'ArrowDown'); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones.
+- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones.
   t = a numeric id from bu.state()/bu.find(), the exact accessible name or a unique prefix of it, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
 - Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Don't press Enter on a suggestion list you have not seen.
 - Never construct opaque or encoded URL parameters (base64/protobuf tokens such as tfs=); use the site's controls or URLs you have observed.
@@ -282,9 +285,42 @@ export class AxHelpers {
     }
   }
 
+  /**
+   * Text actually shown, lowercased with whitespace collapsed. The AX tree keeps opacity:0 text (pre-rendered
+   * success banners), which agents then report as success; checkVisibility with checkOpacity drops it.
+   */
+  private visibleText(page = this.page()) {
+    return page.evaluate(() => {
+      const out: string[] = [];
+      const shown = new Map<Element, boolean>();
+      const roots: Node[] = [document];
+      for (let i = 0; i < roots.length; i++) {
+        const walk = document.createTreeWalker(
+          roots[i]!,
+          NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+        );
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          if (n instanceof Element) {
+            if (n.shadowRoot) roots.push(n.shadowRoot);
+            continue;
+          }
+          const e = n.parentElement;
+          if (!e || !n.textContent?.trim()) continue;
+          if (!shown.has(e))
+            shown.set(e, e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+          if (shown.get(e)) out.push(n.textContent);
+        }
+      }
+      return out.join(' ').replace(/\s+/g, ' ').toLowerCase();
+    });
+  }
+
   /** Compact state: URL, title, interactive controls (ids usable as targets), visible text summary. */
   async state(options: { max?: number; text?: number; print?: boolean } = {}) {
-    const snap = await this.nodes();
+    const [snap, visible] = await Promise.all([
+      this.nodes(),
+      this.visibleText().catch(() => undefined),
+    ]);
     const all = snap.nodes.filter(
       (n) => CONTROLS.has(n.role) && (n.name || n.value !== undefined || n.role !== 'link'),
     );
@@ -307,6 +343,7 @@ export class AxHelpers {
     const limit = options.text ?? 1200;
     for (const n of snap.nodes) {
       if (!(n.role === 'heading' || n.role === 'StaticText') || !n.name) continue;
+      if (visible !== undefined && !visible.includes(n.name.toLowerCase())) continue;
       const part = n.role === 'heading' ? `## ${n.name}` : n.name;
       if (textParts.at(-1) === part) continue;
       textParts.push(part);
@@ -829,11 +866,7 @@ export class AxHelpers {
     const want = norm(text);
     while (Date.now() < deadline) {
       try {
-        const found = await this.page().evaluate((w: string) => {
-          const t = (document.body?.innerText ?? '').replace(/\s+/g, ' ').toLowerCase();
-          return t.includes(w);
-        }, want);
-        if (found) return true;
+        if ((await this.visibleText()).includes(want)) return true;
       } catch (error) {
         if (!isContextLoss(error)) throw error;
       }
