@@ -349,7 +349,7 @@ process.on('message', async (message: WorkerRequest) => {
         );
       else
         await bu
-          .state({ max: 40, text: 800 })
+          .state({ max: 30, text: 500 })
           .catch((error: unknown) => sink.write(`[state unavailable: ${String(error)}]\n`));
     }
     active = false;
