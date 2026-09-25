@@ -358,7 +358,7 @@ export async function main() {
             },
           }
         : {}),
-      instructions: `${options.evidence_format === 'findings' ? 'Use browser UI, public search and source APIs for research; use files/scripts for processing.' : 'Use browser UI and page evaluation for research. Do not use web search.'} Do not read files outside the output workspace or inspect benchmark source, rubrics, judge code, or credentials. Save requested files incrementally in workspace.${viewport ? `\n${coordinatePrompt(viewport)}` : ''}`,
+      instructions: `${options.evidence_format === 'findings' ? 'Use browser UI, public search and source APIs for research; use files/scripts for processing.' : 'Use browser UI and page evaluation for research.'} Do not read files outside the output workspace or inspect benchmark source, rubrics, judge code, or credentials. Save requested files incrementally in workspace.${viewport ? `\n${coordinatePrompt(viewport)}` : ''}`,
     });
     const findings = options.evidence_format === 'findings';
     const steps = [];
