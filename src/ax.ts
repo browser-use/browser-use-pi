@@ -421,7 +421,7 @@ export class AxHelpers {
     if (results.every((r) => !r.ok)) throw new Error(results[0]?.error ?? 'search failed');
     const rows = results.map((r, i) => {
       if (!r.ok) this.log(`[search ${JSON.stringify(queries[i])}] failed: ${r.error}`);
-      else this.logSerp(queries[i]!, r.value as SerpRow[]);
+      else this.logSerp(queries[i]!, (r.value as SerpRow[]).slice(0, queries.length > 1 ? 5 : 10));
       return (r.value ?? []) as SerpRow[];
     });
     const out = Array.isArray(query)
