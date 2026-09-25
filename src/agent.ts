@@ -15,13 +15,9 @@ import { researchTools } from './research-tools.js';
 import type { BrowserUseOptions, RunOptions, RunResult, StopReason } from './types.js';
 import { redact } from './history.js';
 import { SYSTEM_PROMPT } from './prompt.js';
-import { AX_PROMPT, GAVE_UP } from './ax.js';
+import { AX_PROMPT } from './ax.js';
 import { positiveInteger } from './protocol.js';
 import { bounded, type RunControl } from './control.js';
-
-// The stated budget sets how much work the model plans; the full limits stay as a safety net.
-const BUDGET_MINUTES = 5;
-const BUDGET_TURNS = 10;
 
 export const zeroUsage = (): Usage => ({
   input: 0,
@@ -75,9 +71,6 @@ export async function runAgent(
   const hookTimeout = config.hookTimeoutMs ?? 30_000;
   let steps = 0;
   let finishRepairs = 0;
-  let cells = 0;
-  let rejections = 0;
-  let cellsAtRejection = 0;
   let providerRetries = 0;
   let retriedUsage = zeroUsage();
   let finalizing = false;
@@ -109,7 +102,6 @@ export async function runAgent(
     execute: async (_id, params: { code: string }, signal) => {
       let result;
       try {
-        cells++;
         result = await runtime.execute(params.code, config.cellTimeoutMs ?? 30_000, signal);
       } catch (error) {
         if (!(error instanceof CellError)) throw error;
@@ -135,25 +127,6 @@ export async function runAgent(
       throw new Error(
         `Final result does not match schema: ${JSON.stringify(Errors(schema, output).slice(0, 5)).slice(0, 2000)}`,
       );
-    // Fast models report failure after one route and resubmit it unchanged; while budget remains, require a new attempt.
-    if (
-      config.semantic &&
-      !finalizing &&
-      !finishRepairs &&
-      rejections < 3 &&
-      (rejections === 0 || cells < cellsAtRejection + 4) &&
-      Date.now() - start < timeoutMs / 2 &&
-      // Short answers that give up, not long reports that list what they could not verify.
-      typeof output === 'string' &&
-      output.length < 600 &&
-      GAVE_UP.test(output)
-    ) {
-      rejections++;
-      cellsAtRejection = cells;
-      throw new Error(
-        `Result rejected: it reports the task as not done after ${Math.round((Date.now() - start) / 60000)} of ${Math.round(timeoutMs / 60000)} minutes. Keep working: try genuinely different routes (other search queries and engines, a direct URL with the query, the site's other listing pages, the underlying data request, another official source for the same facts), at least four more javascript calls, before reporting failure again. Never guess or fabricate.`,
-      );
-    }
     if (config.validateResult) {
       const feedback = await bounded(
         () => config.validateResult!(output, signal),
@@ -233,7 +206,7 @@ export async function runAgent(
     initialState: {
       model,
       messages: session?.messages ?? [],
-      systemPrompt: `${SYSTEM_PROMPT}${config.semantic ? `${AX_PROMPT}- Budget for this task: ${Math.min(Math.round(timeoutMs / 60000), BUDGET_MINUTES)} minutes and ${Math.min(maxSteps, BUDGET_TURNS)} turns. Hard lookups usually take many searches and page reads; spend the budget before concluding that something cannot be found. Never pad a list or fill a field to reach a requested count; report the shortfall.\n` : ''}\nWorkspace directory (JSON string): ${JSON.stringify(workspace)}. Relative file-tool paths and the JavaScript working directory start here. Save deliverables inside this directory; files outside it are not included by BrowserUse.files(). Use relative paths or the exact workspace value, not a guessed parent directory.\n${journalGuidance}${config.sensitiveData ? `Named secrets (values withheld): ${JSON.stringify(Object.fromEntries(Object.entries(config.sensitiveData).map(([name, entry]) => [name, entry.domains])))}. Use await fillSecret(name, backendNodeId, page) on an input found in the AX tree. Never read back, print or save credentials.\n` : ''}${config.instructions ?? ''}`,
+      systemPrompt: `${SYSTEM_PROMPT}${config.semantic ? AX_PROMPT : ''}\nWorkspace directory (JSON string): ${JSON.stringify(workspace)}. Relative file-tool paths and the JavaScript working directory start here. Save deliverables inside this directory; files outside it are not included by BrowserUse.files(). Use relative paths or the exact workspace value, not a guessed parent directory.\n${journalGuidance}${config.sensitiveData ? `Named secrets (values withheld): ${JSON.stringify(Object.fromEntries(Object.entries(config.sensitiveData).map(([name, entry]) => [name, entry.domains])))}. Use await fillSecret(name, backendNodeId, page) on an input found in the AX tree. Never read back, print or save credentials.\n` : ''}${config.instructions ?? ''}`,
       thinkingLevel: config.reasoning ?? 'medium',
       tools: [
         javascript,
