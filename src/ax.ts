@@ -49,6 +49,7 @@ const ROLES: Record<Op, Set<string>> = {
     'heading',
     'textbox',
     'searchbox',
+    'slider',
   ]),
   select: new Set(['combobox', 'listbox']),
   check: new Set(['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio']),
@@ -78,6 +79,9 @@ const KEYS: Record<string, { code: string; key: string; keyCode: number; text?: 
   Escape: { code: 'Escape', key: 'Escape', keyCode: 27 },
   ArrowDown: { code: 'ArrowDown', key: 'ArrowDown', keyCode: 40 },
   ArrowUp: { code: 'ArrowUp', key: 'ArrowUp', keyCode: 38 },
+  ArrowLeft: { code: 'ArrowLeft', key: 'ArrowLeft', keyCode: 37 },
+  ArrowRight: { code: 'ArrowRight', key: 'ArrowRight', keyCode: 39 },
+  Space: { code: 'Space', key: ' ', keyCode: 32, text: ' ' },
   PageDown: { code: 'PageDown', key: 'PageDown', keyCode: 34 },
   Backspace: { code: 'Backspace', key: 'Backspace', keyCode: 8 },
 };
@@ -106,11 +110,12 @@ export const AX_PROMPT = `
 
 Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
 - Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically, so you rarely need a separate look.
-- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'ArrowDown').
+- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones.
   t = a numeric id from bu.state()/bu.find(), the exact accessible name or a unique prefix of it, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
 - Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Don't press Enter on a suggestion list you have not seen.
 - Never construct opaque or encoded URL parameters (base64/protobuf tokens such as tfs=); use the site's controls or URLs you have observed.
 - If an interaction fails, try one different route (ids from bu.find, another control, keyboard) before reporting that you are blocked.
+- JavaScript alert/confirm/prompt dialogs are accepted automatically; their text is printed as [dialog ...] after the action.
 - Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids.
 - Read without dumping HTML: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows as objects keyed by column headers; await bu.list(i?) -> [{text, links}]; await bu.links('filter') -> [{name,url}]. Each prints a count, fields and a sample.
 - Web search: await bu.search('exact words') -> [{title,url,snippet}] from DuckDuckGo in the current tab (Google shows captchas to automated browsers). Then open or bu.map the promising urls.
@@ -165,6 +170,7 @@ export class AxHelpers {
   private inflight = new Map<string, Map<string, number>>();
   private lastNet = new Map<string, number>();
   private tracked = new Set<string>();
+  private dialogs: string[] = [];
 
   /** Track in-flight requests per page session from CDP Network events (no page patching). */
   private async trackNetwork(page: Page) {
@@ -173,6 +179,21 @@ export class AxHelpers {
       const previous = cdp.observeEvent;
       cdp.observeEvent = (method, raw, session) => {
         previous?.(method, raw, session);
+        // An open alert/confirm blocks the page and every CDP call on it: accept it and report its text.
+        if (method === 'Page.javascriptDialogOpening') {
+          const d = raw as { type: string; message: string; defaultPrompt?: string };
+          this.dialogs.push(
+            `[dialog ${d.type}${this.at()}] ${JSON.stringify(clip(d.message, 300))} (accepted)`,
+          );
+          void cdp
+            .send(
+              'Page.handleJavaScriptDialog',
+              { accept: true, promptText: d.defaultPrompt ?? '' },
+              session,
+            )
+            .catch(() => {});
+          return;
+        }
         if (!session || !method.startsWith('Network.')) return;
         const params = raw as { requestId: string; type?: string };
         const map = this.inflight.get(session) ?? new Map<string, number>();
@@ -244,6 +265,10 @@ export class AxHelpers {
     return { why: 'cap', ready: 'unknown', ms: Date.now() - start };
   }
 
+  private flushDialogs() {
+    return this.dialogs.length ? `\n${this.dialogs.splice(0).join('\n')}` : '';
+  }
+
   /** Duration of the last full AX snapshot; the worker skips its automatic state print on slow pages. */
   snapshotMs = 0;
   private async nodes(page = this.page()) {
@@ -260,9 +285,42 @@ export class AxHelpers {
     }
   }
 
+  /**
+   * Text actually shown, lowercased with whitespace collapsed. The AX tree keeps opacity:0 text (pre-rendered
+   * success banners), which agents then report as success; checkVisibility with checkOpacity drops it.
+   */
+  private visibleText(page = this.page()) {
+    return page.evaluate(() => {
+      const out: string[] = [];
+      const shown = new Map<Element, boolean>();
+      const roots: Node[] = [document];
+      for (let i = 0; i < roots.length; i++) {
+        const walk = document.createTreeWalker(
+          roots[i]!,
+          NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+        );
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          if (n instanceof Element) {
+            if (n.shadowRoot) roots.push(n.shadowRoot);
+            continue;
+          }
+          const e = n.parentElement;
+          if (!e || !n.textContent?.trim()) continue;
+          if (!shown.has(e))
+            shown.set(e, e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+          if (shown.get(e)) out.push(n.textContent);
+        }
+      }
+      return out.join(' ').replace(/\s+/g, ' ').toLowerCase();
+    });
+  }
+
   /** Compact state: URL, title, interactive controls (ids usable as targets), visible text summary. */
   async state(options: { max?: number; text?: number; print?: boolean } = {}) {
-    const snap = await this.nodes();
+    const [snap, visible] = await Promise.all([
+      this.nodes(),
+      this.visibleText().catch(() => undefined),
+    ]);
     const all = snap.nodes.filter(
       (n) => CONTROLS.has(n.role) && (n.name || n.value !== undefined || n.role !== 'link'),
     );
@@ -272,6 +330,7 @@ export class AxHelpers {
       ROLES.fill.has(n.role) || n.expanded || n.role === 'option' ? 0 : 1;
     const controls = all
       .filter((n) => {
+        if (!n.name && ROLES.fill.has(n.role)) return true; // unlabeled fields are distinct fields, not repeats
         const key = `${n.role}|${n.name}|${n.value ?? ''}`;
         return seen.has(key) ? false : (seen.add(key), true);
       })
@@ -284,6 +343,7 @@ export class AxHelpers {
     const limit = options.text ?? 1200;
     for (const n of snap.nodes) {
       if (!(n.role === 'heading' || n.role === 'StaticText') || !n.name) continue;
+      if (visible !== undefined && !visible.includes(n.name.toLowerCase())) continue;
       const part = n.role === 'heading' ? `## ${n.name}` : n.name;
       if (textParts.at(-1) === part) continue;
       textParts.push(part);
@@ -299,7 +359,7 @@ export class AxHelpers {
     };
     if (options.print !== false)
       this.log(
-        `[state${this.at()}] ${result.title} | ${result.url}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
+        `[state${this.at()}] ${result.title} | ${result.url}${this.flushDialogs()}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
       );
     return result;
   }
@@ -462,6 +522,7 @@ export class AxHelpers {
     const entry: (typeof this.history)[number] = { op, target, status: 'resolving' };
     this.history.push(entry);
     try {
+      await this.trackNetwork(this.page()).catch(() => {});
       const { id, detail, value } = await body();
       entry.id = id;
       entry.status = 'completed';
@@ -472,7 +533,7 @@ export class AxHelpers {
         .catch(() => ({ url: '?', title: '?' }));
       entry.ms = Date.now() - started;
       this.log(
-        `[ok${this.at()}] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}`,
+        `[ok${this.at()}] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}${this.flushDialogs()}`,
       );
       return {
         ok: true,
@@ -526,14 +587,84 @@ export class AxHelpers {
     return 0;
   }
 
-  async click(target: Target) {
+  async click(target: Target, options: { button?: 'left' | 'right'; count?: number } = {}) {
     return this.act('click', target, async () => {
       const { page, node } = await this.resolve('click', target);
       const p = await this.point(page, node.id);
       const entry = this.history.at(-1)!;
       entry.status = 'attempted';
-      await page.clickAt(p.x, p.y);
+      const button = options.button ?? 'left';
+      await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+      for (let clickCount = 1; clickCount <= (options.count ?? 1); clickCount++)
+        for (const type of ['mousePressed', 'mouseReleased'] as const)
+          await page.cdp('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button, clickCount });
       return { id: node.id, detail: `${node.role} "${clip(node.name, 50)}"` };
+    });
+  }
+
+  async hover(target: Target) {
+    return this.act('hover', target, async () => {
+      const { page, node } = await this.resolve('click', target);
+      const p = await this.point(page, node.id);
+      this.history.at(-1)!.status = 'attempted';
+      await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+      return { id: node.id, detail: `${node.role} "${clip(node.name, 50)}"` };
+    });
+  }
+
+  /** Press on `from`, move in steps and release on `to` (a target) or at an offset; HTML5 draggables use Chrome's drag interception. */
+  async drag(from: Target, to: Target | { dx: number; dy: number }) {
+    return this.act('drag', from, async () => {
+      const { page, node } = await this.resolve('click', from);
+      const a = await this.point(page, node.id);
+      const b =
+        typeof to === 'object' && 'dx' in to
+          ? { x: a.x + to.dx, y: a.y + to.dy }
+          : await this.point(page, (await this.resolve('click', to)).node.id);
+      const html5 = await this.onNode<boolean>(
+        page,
+        node.id,
+        `function(){return !!(this.nodeType===1?this:this.parentElement).closest('[draggable=true]');}`,
+      );
+      this.history.at(-1)!.status = 'attempted';
+      const move = (
+        x: number,
+        y: number,
+        type: 'mouseMoved' | 'mousePressed' | 'mouseReleased' = 'mouseMoved',
+      ) =>
+        page.cdp('Input.dispatchMouseEvent', {
+          type,
+          x,
+          y,
+          button: 'left',
+          buttons: type === 'mouseReleased' ? 0 : 1,
+          clickCount: 1,
+        });
+      await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y });
+      if (html5) await page.cdp('Input.setInterceptDrags', { enabled: true });
+      try {
+        const intercepted = html5
+          ? this.browser().waitFor('Input.dragIntercepted', {
+              sessionId: page.sessionId,
+              timeoutMs: 3000,
+            })
+          : undefined;
+        await move(a.x, a.y, 'mousePressed');
+        for (let i = 1; i <= 10; i++)
+          await move(a.x + ((b.x - a.x) * i) / 10, a.y + ((b.y - a.y) * i) / 10);
+        if (intercepted) {
+          const { data } = await intercepted;
+          for (const type of ['dragEnter', 'dragOver', 'drop'] as const)
+            await page.cdp('Input.dispatchDragEvent', { type, x: b.x, y: b.y, data });
+        }
+        await move(b.x, b.y, 'mouseReleased');
+      } finally {
+        if (html5) await page.cdp('Input.setInterceptDrags', { enabled: false }).catch(() => {});
+      }
+      return {
+        id: node.id,
+        detail: `(${Math.round(a.x)},${Math.round(a.y)}) -> (${Math.round(b.x)},${Math.round(b.y)})${html5 ? ' html5' : ''}`,
+      };
     });
   }
 
@@ -581,7 +712,14 @@ export class AxHelpers {
           modifiers: 2,
         });
         if (text === '') await this.key(page, 'Backspace');
-        else await page.cdp('Input.insertText', { text });
+        else {
+          // Datepickers and autocompletes react to key events, which insertText never sends: type the last character as a key.
+          const chars = [...text];
+          const last = chars.pop()!;
+          if (chars.length) await page.cdp('Input.insertText', { text: chars.join('') });
+          await page.cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: last, text: last });
+          await page.cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: last });
+        }
       }
       const actual = await (
         typedInto
@@ -728,11 +866,7 @@ export class AxHelpers {
     const want = norm(text);
     while (Date.now() < deadline) {
       try {
-        const found = await this.page().evaluate((w: string) => {
-          const t = (document.body?.innerText ?? '').replace(/\s+/g, ' ').toLowerCase();
-          return t.includes(w);
-        }, want);
-        if (found) return true;
+        if ((await this.visibleText()).includes(want)) return true;
       } catch (error) {
         if (!isContextLoss(error)) throw error;
       }
