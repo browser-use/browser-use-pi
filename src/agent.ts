@@ -20,8 +20,8 @@ import { positiveInteger } from './protocol.js';
 import { bounded, type RunControl } from './control.js';
 
 // The stated budget sets how much work the model plans; the full limits stay as a safety net.
-const BUDGET_MINUTES = 10;
-const BUDGET_TURNS = 15;
+const BUDGET_MINUTES = 5;
+const BUDGET_TURNS = 10;
 
 export const zeroUsage = (): Usage => ({
   input: 0,
