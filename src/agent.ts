@@ -15,7 +15,7 @@ import { researchTools } from './research-tools.js';
 import type { BrowserUseOptions, RunOptions, RunResult, StopReason } from './types.js';
 import { redact } from './history.js';
 import { SYSTEM_PROMPT } from './prompt.js';
-import { AX_PROMPT, GAVE_UP } from './ax.js';
+import { AX_PROMPT, GAVE_UP, SEARCH_PROMPT } from './ax.js';
 import { positiveInteger } from './protocol.js';
 import { bounded, type RunControl } from './control.js';
 
@@ -229,7 +229,7 @@ export async function runAgent(
     initialState: {
       model,
       messages: session?.messages ?? [],
-      systemPrompt: `${SYSTEM_PROMPT}${config.semantic ? `${AX_PROMPT}- Before answering that something cannot be found, try at least 6 genuinely different searches or sources (other wording, the site's own search, official or primary sources). Stop as soon as you have the answer.\n` : ''}\nWorkspace directory (JSON string): ${JSON.stringify(workspace)}. Relative file-tool paths and the JavaScript working directory start here. Save deliverables inside this directory; files outside it are not included by BrowserUse.files(). Use relative paths or the exact workspace value, not a guessed parent directory.\n${journalGuidance}${config.sensitiveData ? `Named secrets (values withheld): ${JSON.stringify(Object.fromEntries(Object.entries(config.sensitiveData).map(([name, entry]) => [name, entry.domains])))}. Use await fillSecret(name, backendNodeId, page) on an input found in the AX tree. Never read back, print or save credentials.\n` : ''}${config.instructions ?? ''}`,
+      systemPrompt: `${SYSTEM_PROMPT}${config.semantic ? `${AX_PROMPT}${config.webSearch ? SEARCH_PROMPT : ''}- Before answering that something cannot be found, try at least 6 genuinely different searches or sources (other wording, the site's own search, official or primary sources). Stop as soon as you have the answer.\n` : ''}\nWorkspace directory (JSON string): ${JSON.stringify(workspace)}. Relative file-tool paths and the JavaScript working directory start here. Save deliverables inside this directory; files outside it are not included by BrowserUse.files(). Use relative paths or the exact workspace value, not a guessed parent directory.\n${journalGuidance}${config.sensitiveData ? `Named secrets (values withheld): ${JSON.stringify(Object.fromEntries(Object.entries(config.sensitiveData).map(([name, entry]) => [name, entry.domains])))}. Use await fillSecret(name, backendNodeId, page) on an input found in the AX tree. Never read back, print or save credentials.\n` : ''}${config.instructions ?? ''}`,
       thinkingLevel: config.reasoning ?? 'medium',
       tools: [
         javascript,

@@ -336,6 +336,15 @@ export async function main() {
       cellTimeoutMs: options.cell_timeout_ms,
       operationTimeoutMs: 20000,
       ...(options.semantic ? { semantic: true } : {}),
+      // The platform's search proxy uses the cloud worker's names for the same endpoint.
+      ...(process.env.V4_GATEWAY_URL && process.env.V4_RUN_TOKEN
+        ? {
+            webSearch: {
+              url: `${process.env.V4_GATEWAY_URL}/api/v4/search`,
+              token: process.env.V4_RUN_TOKEN,
+            },
+          }
+        : {}),
       ...(options.service_tier
         ? {
             // streamSimple drops serviceTier, so set it on the request body.

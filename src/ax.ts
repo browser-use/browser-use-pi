@@ -106,28 +106,28 @@ export const GAVE_UP =
   /\b(I (?:could ?n[o'’]t|can ?n[o'’]t|cannot|was(?: not|n[o'’]t) able to)|unable to (?:find|access|complete|locate|verify|identify|determine))\b/i;
 
 type SerpRow = { title: string; url: string; snippet: string };
-/** DuckDuckGo HTML result rows, run inside the results page. */
-const SERP = (): SerpRow[] => {
-  // DuckDuckGo answers suspected bots with a challenge page (HTTP 202) and no results.
-  if (document.querySelector('.anomaly-modal, form.challenge-form'))
-    throw new Error('SEARCH_BLOCKED: DuckDuckGo showed a bot challenge');
-  return Array.from(document.querySelectorAll('.result:not(.result--ad)'))
-    .map((r) => {
-      const a = r.querySelector('a.result__a');
-      const link = new URL(a?.getAttribute('href') ?? '', location.href);
-      return {
-        title: a?.textContent?.trim() ?? '',
-        url: link.searchParams.get('uddg') ?? link.href,
-        snippet: r.querySelector('.result__snippet')?.textContent?.trim() ?? '',
-      };
-    })
-    .filter((r) => r.title)
-    .slice(0, 10);
-};
+/** Rows from the search endpoint's text: blocks of Title/URL/Published/Highlights separated by ---. */
+const rowsFrom = (text: string): SerpRow[] =>
+  text
+    .split('\n\n---\n\n')
+    .map((block) => ({
+      title: block.match(/^Title: (.*)$/m)?.[1] ?? '',
+      url: block.match(/^URL: (.*)$/m)?.[1] ?? '',
+      snippet:
+        block
+          .split(/^Highlights:\n|^Text: /m)[1]
+          ?.replace(/\s+/g, ' ')
+          .trim() ?? '',
+    }))
+    .filter((r) => r.url);
 
 /** A value its bu call already printed: the REPL's echo of it becomes a one-line note instead of a second copy. */
 const printed = <T extends object>(value: T, note: string): T =>
   Object.defineProperty(value, Symbol.for('nodejs.util.inspect.custom'), { value: () => note });
+
+/** Appended to the helper prompt when a search endpoint is configured. */
+export const SEARCH_PROMPT = `- Web search: await bu.search('the page you want, described in natural language') -> [{title,url,snippet}] in ~1 s without a browser tab (search engines in the browser trigger bot checks). await bu.search(['query 1', 'query 2', ...]) runs up to 6 at once -> {query: rows}. Snippets are excerpts: open or bu.map the urls you need in full.
+`;
 
 /** Appended to the system prompt when the `bu` helpers are enabled. */
 export const AX_PROMPT = `
@@ -142,7 +142,6 @@ Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw
 - JavaScript alert/confirm/prompt dialogs are accepted automatically; their text is printed as [dialog ...] after the action.
 - Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids.
 - Read without dumping HTML: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows as objects keyed by column headers; await bu.list(i?) -> [{text, links}]; await bu.links('filter') -> [{name,url}]. Each prints a count, fields and a sample.
-- Web search: await bu.search('exact words') -> [{title,url,snippet}] from DuckDuckGo in a background tab (Google shows captchas to automated browsers). await bu.search(['query 1', 'query 2', ...]) runs up to 6 queries at once -> {query: rows}; batch your query variants this way. Then open or bu.map the promising urls.
 - Many pages: const rows = await bu.map(urls, () => ({title: document.title, price: document.querySelector('.price')?.textContent}), {concurrency: 6}) opens pages in parallel background tabs with per-host politeness and 429 backoff; returns [{url, ok, status, value|error}] and saves partial results to the workspace. {mode:'fetch'} fetches over HTTP instead and calls extract(text, {url,status}) in Node. Never loop page.goto over many URLs.
 - Work longer than ~2 minutes: const id = bu.job('name', async progress => {...}); then await bu.wait(id) blocks up to 150 s, prints progress and returns {done, value}. Never poll with sleep loops or "alive" prints.
 - NEVER write blind sleeps (setTimeout/new Promise delays/sleep) to wait for pages. Actions already settle. For a specific condition use await bu.waitForText('Results') or await page.waitFor(predicate).
@@ -184,6 +183,7 @@ export class AxHelpers {
     private browser: () => CDP,
     private workspace: string,
     private log: (text: string) => void,
+    private webSearch?: { url: string; token: string },
   ) {}
 
   private inflight = new Map<string, Map<string, number>>();
@@ -432,22 +432,37 @@ export class AxHelpers {
     return printed(result, '[state printed above]');
   }
 
-  /** Web search via DuckDuckGo's HTML page in background tabs; Google answers automated browsers with captchas. */
+  /** Web search through the host's endpoint (Browser Use Cloud's /api/v4/search contract), no browser tab. */
   async search(query: string | string[]) {
+    if (!this.webSearch)
+      throw new Error('bu.search needs the webSearch option; search in the browser instead.');
+    const { url, token } = this.webSearch;
     const queries = Array.isArray(query) ? query : [query];
     if (queries.length > 6) throw new Error('bu.search takes at most 6 queries per call.');
-    const url = (q: string) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
-    const { results } = await this.crawl(
-      queries.map(url),
-      SERP,
-      { perHost: 1, minGapMs: 500 },
-      () => {},
+    const results = await Promise.allSettled(
+      queries.map(async (q) => {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!response.ok)
+          throw new Error(
+            `search HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`,
+          );
+        return rowsFrom(((await response.json()) as { results: string }).results);
+      }),
     );
-    if (results.every((r) => !r.ok)) throw new Error(results[0]?.error ?? 'search failed');
+    if (results.every((r) => r.status === 'rejected'))
+      throw (results[0] as PromiseRejectedResult).reason;
     const rows = results.map((r, i) => {
-      if (!r.ok) this.log(`[search ${JSON.stringify(queries[i])}] failed: ${r.error}`);
-      else this.logSerp(queries[i]!, (r.value as SerpRow[]).slice(0, queries.length > 1 ? 5 : 10));
-      return (r.value ?? []) as SerpRow[];
+      if (r.status === 'rejected') {
+        this.log(`[search ${JSON.stringify(queries[i])}] failed: ${String(r.reason)}`);
+        return [];
+      }
+      this.logSerp(queries[i]!, r.value.slice(0, queries.length > 1 ? 5 : 8));
+      return r.value;
     });
     const out = Array.isArray(query)
       ? Object.fromEntries(queries.map((q, i) => [q, rows[i]!]))
@@ -458,7 +473,7 @@ export class AxHelpers {
   private logSerp(query: string, rows: SerpRow[]) {
     this.log(
       `[search ${JSON.stringify(query)}${this.at()}] ${rows.length} result(s)\n${rows
-        .map((r, i) => `${i + 1}. ${clip(r.title, 90)} | ${r.url} | ${clip(r.snippet, 150)}`)
+        .map((r, i) => `${i + 1}. ${clip(r.title, 90)} | ${r.url} | ${clip(r.snippet, 300)}`)
         .join('\n')}`,
     );
   }
