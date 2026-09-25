@@ -301,10 +301,29 @@ export class AxHelpers {
     for (let i = 0; ; i++) {
       try {
         const started = Date.now();
-        const [{ nodes }, info] = await Promise.all([
+        const [{ nodes: top }, info, { frameTree }] = await Promise.all([
           page.cdp('Accessibility.getFullAXTree'),
           page.info(),
+          page.cdp('Page.getFrameTree'),
         ]);
+        // Same-origin iframes render in this process but are missing from the main frame's AX tree.
+        const frames: string[] = [];
+        const walk = (tree: typeof frameTree) =>
+          tree.childFrames?.forEach((child) => {
+            if (child.frame.securityOrigin === frameTree.frame.securityOrigin)
+              frames.push(child.frame.id);
+            walk(child);
+          });
+        walk(frameTree);
+        const inner = await Promise.all(
+          frames.map((frameId) =>
+            page.cdp('Accessibility.getFullAXTree', { frameId }).then(
+              (r) => r.nodes,
+              () => [],
+            ),
+          ),
+        );
+        const nodes = [...top, ...inner.flat()];
         this.snapshotMs = Date.now() - started;
         // A focusable contenteditable element is a text field that Chrome reports as generic.
         const editable = new Set(
@@ -343,8 +362,10 @@ export class AxHelpers {
           NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
         );
         for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-          if (n instanceof Element) {
-            if (n.shadowRoot) roots.push(n.shadowRoot);
+          if (n.nodeType === Node.ELEMENT_NODE) {
+            const el = n as Element & { contentDocument?: Document | null };
+            if (el.shadowRoot) roots.push(el.shadowRoot);
+            if (el.contentDocument) roots.push(el.contentDocument); // same-origin iframe
             continue;
           }
           const e = n.parentElement;
@@ -548,7 +569,14 @@ export class AxHelpers {
         const textField = (n) => n && (['INPUT','TEXTAREA'].includes(n.tagName) || n.isContentEditable);
         if (!e.contains(hit) && !(hit && hit.contains(e) && getComputedStyle(hit).pointerEvents !== 'none' && hit.tagName === 'LABEL') && !(editableCover && textField(e) && textField(hit)))
           throw Error('Target covered by ' + (hit ? hit.tagName.toLowerCase() + (hit.id ? '#' + hit.id : '') + (hit.className && typeof hit.className === 'string' ? '.' + hit.className.split(' ')[0] : '') : 'nothing'));
-        return {x, y, tag: e.tagName, type: e.type || '', editable: textField(e)};
+        // Inside same-origin iframes, add each frame's content-box offset to get top-level viewport coordinates.
+        let px = x, py = y;
+        for (let w = e.ownerDocument.defaultView; w && w.frameElement; w = w.parent) {
+          const f = w.frameElement, fr = f.getBoundingClientRect(), cs = getComputedStyle(f);
+          px += fr.x + f.clientLeft + parseFloat(cs.paddingLeft);
+          py += fr.y + f.clientTop + parseFloat(cs.paddingTop);
+        }
+        return {x: px, y: py, tag: e.tagName, type: e.type || '', editable: textField(e)};
       }`,
       editableCover,
     );
