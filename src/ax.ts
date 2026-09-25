@@ -288,6 +288,7 @@ export class AxHelpers {
       ROLES.fill.has(n.role) || n.expanded || n.role === 'option' ? 0 : 1;
     const controls = all
       .filter((n) => {
+        if (!n.name && ROLES.fill.has(n.role)) return true; // unlabeled fields are distinct fields, not repeats
         const key = `${n.role}|${n.name}|${n.value ?? ''}`;
         return seen.has(key) ? false : (seen.add(key), true);
       })
