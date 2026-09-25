@@ -135,12 +135,14 @@ export async function runAgent(
     if (
       config.semantic &&
       !finalizing &&
+      !finishRepairs &&
       rejections < 3 &&
       (rejections === 0 || cells < cellsAtRejection + 4) &&
       Date.now() - start < timeoutMs / 2 &&
       // Short answers that give up, not long reports that list what they could not verify.
-      (JSON.stringify(output) ?? '').length < 600 &&
-      GAVE_UP.test(JSON.stringify(output) ?? '')
+      typeof output === 'string' &&
+      output.length < 600 &&
+      GAVE_UP.test(output)
     ) {
       rejections++;
       cellsAtRejection = cells;
