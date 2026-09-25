@@ -136,13 +136,14 @@ export async function runAgent(
       config.semantic &&
       !finalizing &&
       rejections < 3 &&
-      (rejections === 0 || cells === cellsAtRejection) &&
+      (rejections === 0 || cells < cellsAtRejection + 4) &&
+      Date.now() - start < timeoutMs / 2 &&
       GAVE_UP.test(JSON.stringify(output) ?? '')
     ) {
       rejections++;
       cellsAtRejection = cells;
       throw new Error(
-        "Result rejected: it reports the task as not done, and budget remains. Try at least one genuinely different route first: a direct URL with the query, the site's other search or listing pages, the underlying data request, or another official source for the same facts. Never guess or fabricate. If that also fails, finish with an honest report; resubmitting without a new attempt is rejected.",
+        `Result rejected: it reports the task as not done after ${Math.round((Date.now() - start) / 60000)} of ${Math.round(timeoutMs / 60000)} minutes. Keep working: try genuinely different routes (other search queries and engines, a direct URL with the query, the site's other listing pages, the underlying data request, another official source for the same facts), at least four more javascript calls, before reporting failure again. Never guess or fabricate.`,
       );
     }
     if (config.validateResult) {
@@ -224,7 +225,7 @@ export async function runAgent(
     initialState: {
       model,
       messages: session?.messages ?? [],
-      systemPrompt: `${SYSTEM_PROMPT}${config.semantic ? AX_PROMPT : ''}\nWorkspace directory (JSON string): ${JSON.stringify(workspace)}. Relative file-tool paths and the JavaScript working directory start here. Save deliverables inside this directory; files outside it are not included by BrowserUse.files(). Use relative paths or the exact workspace value, not a guessed parent directory.\n${journalGuidance}${config.sensitiveData ? `Named secrets (values withheld): ${JSON.stringify(Object.fromEntries(Object.entries(config.sensitiveData).map(([name, entry]) => [name, entry.domains])))}. Use await fillSecret(name, backendNodeId, page) on an input found in the AX tree. Never read back, print or save credentials.\n` : ''}${config.instructions ?? ''}`,
+      systemPrompt: `${SYSTEM_PROMPT}${config.semantic ? `${AX_PROMPT}- Budget for this task: ${Math.round(timeoutMs / 60000)} minutes and ${maxSteps} turns. Hard lookups usually take many searches and page reads; spend the budget before concluding that something cannot be found.\n` : ''}\nWorkspace directory (JSON string): ${JSON.stringify(workspace)}. Relative file-tool paths and the JavaScript working directory start here. Save deliverables inside this directory; files outside it are not included by BrowserUse.files(). Use relative paths or the exact workspace value, not a guessed parent directory.\n${journalGuidance}${config.sensitiveData ? `Named secrets (values withheld): ${JSON.stringify(Object.fromEntries(Object.entries(config.sensitiveData).map(([name, entry]) => [name, entry.domains])))}. Use await fillSecret(name, backendNodeId, page) on an input found in the AX tree. Never read back, print or save credentials.\n` : ''}${config.instructions ?? ''}`,
       thinkingLevel: config.reasoning ?? 'medium',
       tools: [
         javascript,
