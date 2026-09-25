@@ -125,7 +125,7 @@ const SERP = (): SerpRow[] =>
 export const AX_PROMPT = `
 
 Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
-- Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically, so you rarely need a separate look.
+- Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically unless the cell already looked (state/find/read/table/list/links), so you rarely need a separate look.
 - Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones.
   t = a numeric id from bu.state()/bu.find(), the exact accessible name or a unique prefix of it, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
 - Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Don't press Enter on a suggestion list you have not seen.
@@ -333,6 +333,7 @@ export class AxHelpers {
 
   /** Compact state: URL, title, interactive controls (ids usable as targets), visible text summary. */
   async state(options: { max?: number; text?: number; print?: boolean } = {}) {
+    this.dirty = false; // a look after the last action replaces the automatic state print
     const [snap, visible] = await Promise.all([
       this.nodes(),
       this.visibleText().catch(() => undefined),
@@ -406,6 +407,7 @@ export class AxHelpers {
 
   /** Controls whose name/value contains the query (case-insensitive). Read-only. */
   async find(query: string, options: { role?: string; max?: number } = {}) {
+    this.dirty = false;
     const q = norm(query);
     const snap = await this.nodes();
     const hits = snap.nodes
@@ -953,6 +955,7 @@ export class AxHelpers {
 
   /** Readable text lines of the page or of one region (landmark/dialog/form/article/section name or role). */
   async read(region?: string, options: { max?: number } = {}) {
+    this.dirty = false;
     const { nodes, byId, info } = await this.tree();
     let root = nodes[0];
     if (region) {
@@ -1047,6 +1050,7 @@ export class AxHelpers {
 
   /** Table/grid rows as objects keyed by column headers (arrays when no headers). */
   async table(which?: number | string) {
+    this.dirty = false;
     const { nodes, byId } = await this.tree();
     const found = this.pick(nodes, new Set(['table', 'grid', 'treegrid']), which, byId);
     const tables = Array.isArray(found) ? found : found ? [found] : [];
@@ -1101,6 +1105,7 @@ export class AxHelpers {
 
   /** List items with their text and links. Default: the list with the most items. */
   async list(which?: number | string) {
+    this.dirty = false;
     const { nodes, byId } = await this.tree();
     const found = this.pick(nodes, new Set(['list', 'feed', 'listbox', 'tree']), which, byId);
     const lists = Array.isArray(found) ? found : found ? [found] : [];
@@ -1141,6 +1146,7 @@ export class AxHelpers {
 
   /** All links on the page, optionally filtered by name/url substring. */
   async links(filter?: string) {
+    this.dirty = false;
     const { nodes } = await this.tree();
     const f = filter ? norm(filter) : '';
     const seen = new Set<string>();
