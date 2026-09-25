@@ -49,6 +49,7 @@ const ROLES: Record<Op, Set<string>> = {
     'heading',
     'textbox',
     'searchbox',
+    'slider',
   ]),
   select: new Set(['combobox', 'listbox']),
   check: new Set(['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio']),
@@ -102,7 +103,7 @@ export const AX_PROMPT = `
 
 Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
 - Chain every action you already know into ONE javascript call. Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically, so you rarely need a separate look.
-- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'ArrowDown').
+- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'ArrowDown'); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones.
   t = a numeric id from bu.state()/bu.find(), the exact accessible name or a unique prefix of it, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
 - Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Don't press Enter on a suggestion list you have not seen.
 - Never construct opaque or encoded URL parameters (base64/protobuf tokens such as tfs=); use the site's controls or URLs you have observed.
@@ -520,14 +521,84 @@ export class AxHelpers {
     return 0;
   }
 
-  async click(target: Target) {
+  async click(target: Target, options: { button?: 'left' | 'right'; count?: number } = {}) {
     return this.act('click', target, async () => {
       const { page, node } = await this.resolve('click', target);
       const p = await this.point(page, node.id);
       const entry = this.history.at(-1)!;
       entry.status = 'attempted';
-      await page.clickAt(p.x, p.y);
+      const button = options.button ?? 'left';
+      await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+      for (let clickCount = 1; clickCount <= (options.count ?? 1); clickCount++)
+        for (const type of ['mousePressed', 'mouseReleased'] as const)
+          await page.cdp('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button, clickCount });
       return { id: node.id, detail: `${node.role} "${clip(node.name, 50)}"` };
+    });
+  }
+
+  async hover(target: Target) {
+    return this.act('hover', target, async () => {
+      const { page, node } = await this.resolve('click', target);
+      const p = await this.point(page, node.id);
+      this.history.at(-1)!.status = 'attempted';
+      await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+      return { id: node.id, detail: `${node.role} "${clip(node.name, 50)}"` };
+    });
+  }
+
+  /** Press on `from`, move in steps and release on `to` (a target) or at an offset; HTML5 draggables use Chrome's drag interception. */
+  async drag(from: Target, to: Target | { dx: number; dy: number }) {
+    return this.act('drag', from, async () => {
+      const { page, node } = await this.resolve('click', from);
+      const a = await this.point(page, node.id);
+      const b =
+        typeof to === 'object' && 'dx' in to
+          ? { x: a.x + to.dx, y: a.y + to.dy }
+          : await this.point(page, (await this.resolve('click', to)).node.id);
+      const html5 = await this.onNode<boolean>(
+        page,
+        node.id,
+        `function(){return !!(this.nodeType===1?this:this.parentElement).closest('[draggable=true]');}`,
+      );
+      this.history.at(-1)!.status = 'attempted';
+      const move = (
+        x: number,
+        y: number,
+        type: 'mouseMoved' | 'mousePressed' | 'mouseReleased' = 'mouseMoved',
+      ) =>
+        page.cdp('Input.dispatchMouseEvent', {
+          type,
+          x,
+          y,
+          button: 'left',
+          buttons: type === 'mouseReleased' ? 0 : 1,
+          clickCount: 1,
+        });
+      await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y });
+      if (html5) await page.cdp('Input.setInterceptDrags', { enabled: true });
+      try {
+        const intercepted = html5
+          ? this.browser().waitFor('Input.dragIntercepted', {
+              sessionId: page.sessionId,
+              timeoutMs: 3000,
+            })
+          : undefined;
+        await move(a.x, a.y, 'mousePressed');
+        for (let i = 1; i <= 10; i++)
+          await move(a.x + ((b.x - a.x) * i) / 10, a.y + ((b.y - a.y) * i) / 10);
+        if (intercepted) {
+          const { data } = await intercepted;
+          for (const type of ['dragEnter', 'dragOver', 'drop'] as const)
+            await page.cdp('Input.dispatchDragEvent', { type, x: b.x, y: b.y, data });
+        }
+        await move(b.x, b.y, 'mouseReleased');
+      } finally {
+        if (html5) await page.cdp('Input.setInterceptDrags', { enabled: false }).catch(() => {});
+      }
+      return {
+        id: node.id,
+        detail: `(${Math.round(a.x)},${Math.round(a.y)}) -> (${Math.round(b.x)},${Math.round(b.y)})${html5 ? ' html5' : ''}`,
+      };
     });
   }
 
