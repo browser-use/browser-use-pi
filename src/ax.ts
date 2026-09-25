@@ -111,6 +111,7 @@ Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw
 - Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Don't press Enter on a suggestion list you have not seen.
 - Never construct opaque or encoded URL parameters (base64/protobuf tokens such as tfs=); use the site's controls or URLs you have observed.
 - If an interaction fails, try one different route (ids from bu.find, another control, keyboard) before reporting that you are blocked.
+- JavaScript alert/confirm/prompt dialogs are accepted automatically; their text is printed as [dialog ...] after the action.
 - Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids.
 - Read without dumping HTML: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows as objects keyed by column headers; await bu.list(i?) -> [{text, links}]; await bu.links('filter') -> [{name,url}]. Each prints a count, fields and a sample.
 - Web search: await bu.search('exact words') -> [{title,url,snippet}] from DuckDuckGo in the current tab (Google shows captchas to automated browsers). Then open or bu.map the promising urls.
@@ -165,6 +166,7 @@ export class AxHelpers {
   private inflight = new Map<string, Map<string, number>>();
   private lastNet = new Map<string, number>();
   private tracked = new Set<string>();
+  private dialogs: string[] = [];
 
   /** Track in-flight requests per page session from CDP Network events (no page patching). */
   private async trackNetwork(page: Page) {
@@ -173,6 +175,21 @@ export class AxHelpers {
       const previous = cdp.observeEvent;
       cdp.observeEvent = (method, raw, session) => {
         previous?.(method, raw, session);
+        // An open alert/confirm blocks the page and every CDP call on it: accept it and report its text.
+        if (method === 'Page.javascriptDialogOpening') {
+          const d = raw as { type: string; message: string; defaultPrompt?: string };
+          this.dialogs.push(
+            `[dialog ${d.type}${this.at()}] ${JSON.stringify(clip(d.message, 300))} (accepted)`,
+          );
+          void cdp
+            .send(
+              'Page.handleJavaScriptDialog',
+              { accept: true, promptText: d.defaultPrompt ?? '' },
+              session,
+            )
+            .catch(() => {});
+          return;
+        }
         if (!session || !method.startsWith('Network.')) return;
         const params = raw as { requestId: string; type?: string };
         const map = this.inflight.get(session) ?? new Map<string, number>();
@@ -244,6 +261,10 @@ export class AxHelpers {
     return { why: 'cap', ready: 'unknown', ms: Date.now() - start };
   }
 
+  private flushDialogs() {
+    return this.dialogs.length ? `\n${this.dialogs.splice(0).join('\n')}` : '';
+  }
+
   /** Duration of the last full AX snapshot; the worker skips its automatic state print on slow pages. */
   snapshotMs = 0;
   private async nodes(page = this.page()) {
@@ -299,7 +320,7 @@ export class AxHelpers {
     };
     if (options.print !== false)
       this.log(
-        `[state${this.at()}] ${result.title} | ${result.url}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
+        `[state${this.at()}] ${result.title} | ${result.url}${this.flushDialogs()}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
       );
     return result;
   }
@@ -462,6 +483,7 @@ export class AxHelpers {
     const entry: (typeof this.history)[number] = { op, target, status: 'resolving' };
     this.history.push(entry);
     try {
+      await this.trackNetwork(this.page()).catch(() => {});
       const { id, detail, value } = await body();
       entry.id = id;
       entry.status = 'completed';
@@ -472,7 +494,7 @@ export class AxHelpers {
         .catch(() => ({ url: '?', title: '?' }));
       entry.ms = Date.now() - started;
       this.log(
-        `[ok${this.at()}] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}`,
+        `[ok${this.at()}] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}${this.flushDialogs()}`,
       );
       return {
         ok: true,
