@@ -552,7 +552,14 @@ export class AxHelpers {
           modifiers: 2,
         });
         if (text === '') await this.key(page, 'Backspace');
-        else await page.cdp('Input.insertText', { text });
+        else {
+          // Datepickers and autocompletes react to key events, which insertText never sends: type the last character as a key.
+          const chars = [...text];
+          const last = chars.pop()!;
+          if (chars.length) await page.cdp('Input.insertText', { text: chars.join('') });
+          await page.cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: last, text: last });
+          await page.cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: last });
+        }
       }
       const actual = await (
         typedInto
