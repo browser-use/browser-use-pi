@@ -135,7 +135,7 @@ export class BrowserUse {
     }
     const operationTimeoutMs = positiveInteger(
       'operationTimeoutMs',
-      options.operationTimeoutMs ?? 15_000,
+      options.operationTimeoutMs ?? 5_000,
     );
     positiveInteger('cellTimeoutMs', options.cellTimeoutMs ?? 30_000);
     const maxOutputChars = positiveInteger('maxOutputChars', options.maxOutputChars ?? 12_000);
