@@ -82,6 +82,13 @@ export class BrowserUse {
       throw new Error('highlightActions must be boolean.');
     if (options.researchTools !== undefined && typeof options.researchTools !== 'boolean')
       throw new Error('researchTools must be boolean.');
+    if (options.mode !== undefined && options.mode !== 'default' && options.mode !== 'ultrafast')
+      throw new Error("mode must be 'default' or 'ultrafast'.");
+    if (
+      options.webSearch !== undefined &&
+      (typeof options.webSearch?.url !== 'string' || typeof options.webSearch?.token !== 'string')
+    )
+      throw new Error('webSearch must be {url, token}.');
     if (options.recording && typeof options.recording === 'object') {
       positiveInteger('recording.intervalMs', options.recording.intervalMs ?? 750);
       positiveInteger('recording.maxFrames', options.recording.maxFrames ?? 400);
@@ -128,7 +135,7 @@ export class BrowserUse {
     }
     const operationTimeoutMs = positiveInteger(
       'operationTimeoutMs',
-      options.operationTimeoutMs ?? 15_000,
+      options.operationTimeoutMs ?? (options.mode === 'ultrafast' ? 5_000 : 15_000),
     );
     positiveInteger('cellTimeoutMs', options.cellTimeoutMs ?? 30_000);
     const maxOutputChars = positiveInteger('maxOutputChars', options.maxOutputChars ?? 12_000);
@@ -140,6 +147,8 @@ export class BrowserUse {
     const browser = await openBrowser(options.browser);
     const runtime = new BrowserRuntime(
       {
+        mode: options.mode ?? 'default',
+        ...(options.webSearch ? { webSearch: options.webSearch } : {}),
         endpoint: browser.endpoint,
         ...(options.allowedDomains !== undefined ? { allowedDomains: options.allowedDomains } : {}),
         ...(options.prohibitedDomains !== undefined
