@@ -25,6 +25,10 @@ Coordinates hit whatever is visible. Inspect overlays and disabled controls firs
 
 To type, focus an observed input with DOM.focus({backendNodeId:id}), select existing text with Input.dispatchKeyEvent({type:'rawKeyDown',key:'a',code:'KeyA',commands:['selectAll']}), then Input.insertText({text}). Release with Input.dispatchKeyEvent({type:'keyUp',key:'a',code:'KeyA'}); there is no rawKeyUp event. Empty replacement requires Backspace. These are page.cdp calls. Build your own helper if repeating them.
 
+Pages often pre-render success and error messages invisibly, and document.body.innerText includes hidden text. Check outcomes with visible text only:
+  await page.evaluate(() => [...document.querySelectorAll('body *')].filter((e) => !e.childElementCount && e.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})).map((e) => e.textContent.trim()).filter(Boolean).join('\\n'))
+After submitting, wait with page.waitFor until the visible page changes before you report the outcome.
+
 Use page.evaluate for DOM extraction. Use screenshots for visual questions, canvas and geometry; text-only models cannot interpret images. In-process frames: Page.getFrameTree, Page.createIsolatedWorld({frameId,worldName:'agent'}), then Runtime.evaluate with its executionContextId as contextId. Cross-origin iframe targets: browser.send('Target.getTargets'), attach with flatten:true, and send commands on that sessionId. Discover targets instead of guessing IDs.
 
 Uploads: DOM.setFileInputFiles({backendNodeId,files}). Downloads: Browser.setDownloadBehavior plus Browser.downloadProgress; remote browser files live on the remote host. Use Node/files or the provider's download API to retrieve them. For other controls use explicit CDP or ordinary page code, and verify changes.
