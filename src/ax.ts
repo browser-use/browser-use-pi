@@ -401,7 +401,7 @@ export class AxHelpers {
       text: clip(textParts.join('\n'), limit),
     };
     this.log(
-      `[state] ${result.title} | ${result.url}${this.flushDialogs()}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
+      `[state] ${result.title} | ${result.url}${this.flushDialogs()}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}${size > limit ? '\n(text cut here: bu.read() returns the rest of the page)' : ''}`,
     );
     return printed(result, '[state printed above]');
   }
