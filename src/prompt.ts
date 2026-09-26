@@ -13,6 +13,7 @@ Browser primitives:
 - await snapshot() or page.snapshot() -> {url,title,nodes:[{id,role,name,value?,checked?,pressed?,selected?,expanded?,disabled?}]}.
 - await screenshot() or page.screenshot() captures the viewport and sends a native image to the model. Never print image bytes. Explicit raw Page.captureScreenshot calls are captured too.
 - await page.clickAt(x,y) sends real CDP mouse events in viewport coordinates.
+- await page.visibleText() -> the text a user can see (hidden elements excluded).
 - await page.waitFor(fn, jsonArgument, {timeoutMs:10000}) returns void when the predicate becomes truthy. Example: await page.waitFor(() => document.querySelector('[role=status]')?.textContent.includes('Done')). Then read data with page.evaluate.
 - await page.cdp('Domain.method', params) sends a tab command. browser.send(method, params, sessionId?) sends root or explicitly scoped commands.
 - browser.waitFor('Domain.event', {sessionId,timeoutMs,predicate,signal}) subscribes to one event. Register BEFORE triggering it; events are not commands.
@@ -24,6 +25,10 @@ Prefer the accessibility tree for discovery. Filter it in JavaScript before prin
 Coordinates hit whatever is visible. Inspect overlays and disabled controls first; never force a click through them. For clipped checkboxes use the observed visible label. IDs expire after navigation. Verify the actual outcome after every mutation.
 
 To type, focus an observed input with DOM.focus({backendNodeId:id}), select existing text with Input.dispatchKeyEvent({type:'rawKeyDown',key:'a',code:'KeyA',commands:['selectAll']}), then Input.insertText({text}). Release with Input.dispatchKeyEvent({type:'keyUp',key:'a',code:'KeyA'}); there is no rawKeyUp event. Empty replacement requires Backspace. These are page.cdp calls. Build your own helper if repeating them.
+
+await page.visibleText() returns the text a user can see. document.body.innerText also returns hidden text, and pages pre-render success messages invisibly, so check outcomes with page.visibleText(); after submitting, wait until it changes before you report.
+
+Frameworks (React, Vue, Angular, Svelte, Material UI) only see real input. Click a field with page.clickAt, then type with Input.insertText; never assign .value or dispatch synthetic events. Open custom dropdowns and date pickers by clicking, then click the option. Click checkboxes, radios and buttons with page.clickAt.
 
 Use page.evaluate for DOM extraction. Use screenshots for visual questions, canvas and geometry; text-only models cannot interpret images. In-process frames: Page.getFrameTree, Page.createIsolatedWorld({frameId,worldName:'agent'}), then Runtime.evaluate with its executionContextId as contextId. Cross-origin iframe targets: browser.send('Target.getTargets'), attach with flatten:true, and send commands on that sessionId. Discover targets instead of guessing IDs.
 

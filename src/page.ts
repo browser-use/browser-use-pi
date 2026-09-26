@@ -141,6 +141,21 @@ export class Page {
     }
     throw new Error(`Page condition exceeded ${timeoutMs} ms.`);
   }
+  /** Text a user can see: leaf elements that are rendered, visible and not transparent. */
+  async visibleText(): Promise<string> {
+    return this.evaluate(() =>
+      Array.from(document.querySelectorAll('body *'))
+        .filter(
+          (e) =>
+            !e.childElementCount &&
+            e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }),
+        )
+        .map((e) => e.textContent?.trim())
+        .filter(Boolean)
+        .join('\n'),
+    );
+  }
+
   async snapshot(): Promise<{ url: string; title: string; nodes: AXNode[] }> {
     const { nodes } = await this.cdp('Accessibility.getFullAXTree');
     return {
