@@ -335,6 +335,14 @@ export async function runAgent(
     agent.abort();
   }, timeoutMs);
   let error: string | undefined;
+  // Ultrafast: a task that names a URL starts there, so the first model turn already sees the page.
+  const url = task.match(/https?:\/\/[^\s"'<>)\]]+/)?.[0]?.replace(/[.,;:]+$/, '');
+  if (config.mode === 'ultrafast' && url && conversation(agent.state.messages).length === 0) {
+    const opened = await runtime
+      .execute(`await bu.goto(${JSON.stringify(url)}); await bu.state()`, config.cellTimeoutMs ?? 30_000, options.signal)
+      .catch(() => undefined);
+    if (opened) task = `${task}\n\n[Already opened ${url}]\n${opened.text}`;
+  }
   try {
     if (options.signal?.aborted) stopped = 'cancelled';
     else if (
