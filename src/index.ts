@@ -76,6 +76,7 @@ export class BrowserUse {
       redact: [
         ...(options.redact ?? []),
         ...Object.values(options.sensitiveData ?? {}).map((secret) => secret.value),
+        ...(options.webSearch ? [options.webSearch.token] : []),
       ],
     };
     if (options.highlightActions !== undefined && typeof options.highlightActions !== 'boolean')
@@ -135,7 +136,7 @@ export class BrowserUse {
     }
     const operationTimeoutMs = positiveInteger(
       'operationTimeoutMs',
-      options.operationTimeoutMs ?? (options.mode === 'ultrafast' ? 5_000 : 15_000),
+      options.operationTimeoutMs ?? 15_000,
     );
     positiveInteger('cellTimeoutMs', options.cellTimeoutMs ?? 30_000);
     const maxOutputChars = positiveInteger('maxOutputChars', options.maxOutputChars ?? 12_000);

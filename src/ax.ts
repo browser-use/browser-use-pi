@@ -1,7 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { axNodes, type AXNode, type Page, type Tabs } from './page.js';
+import { axNodes, type AXNode, type Page } from './page.js';
 import type { CDP } from './cdp.js';
 
 type Target = number | string | { name: string; role?: string };
@@ -122,31 +122,23 @@ const printed = <T extends object>(value: T, note: string): T =>
   Object.defineProperty(value, Symbol.for('nodejs.util.inspect.custom'), { value: () => note });
 
 /** Appended to the helper prompt when a search endpoint is configured. */
-export const SEARCH_PROMPT = `- Web search: await bu.search('the page you want, described in natural language') -> [{title,url,snippet}] in ~1 s without a browser tab (search engines in the browser trigger bot checks). await bu.search(['query 1', 'query 2', ...]) runs up to 6 at once -> {query: rows}. Snippets are excerpts: open or bu.map the urls you need in full.
+export const SEARCH_PROMPT = `- Web search: await bu.search('the page you want, described in natural language') -> [{title,url,snippet}] without a browser tab (search engines in the browser trigger bot checks). await bu.search(['query 1', 'query 2']) runs up to 6 at once -> {query: rows}. Snippets are excerpts; open the pages you need.
 `;
 
-/** Appended to the system prompt when the `bu` helpers are enabled. */
+/** Appended to the system prompt in ultrafast mode. */
 export const AX_PROMPT = `
 
 Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
-- Chain every action you already know into ONE javascript call. A whole form is one call: await bu.fill('Email *', 'ada@example.com'); await bu.select('Country *', 'Canada'); await bu.check('I agree to the terms', true); await bu.upload('Choose File', 'cv.txt', 'CV of Ada'); await bu.click('Submit'). Research is one call per round: const r = await bu.search(['query a', 'query b']); const pages = await bu.map(Object.values(r).flat().slice(0, 4).map((x) => x.url), () => document.body.innerText.slice(0, 3000)); pages.forEach((p) => console.log(p.url, p.value)). Each bu action waits for the page to settle (DOM quiet, max ~2 s) and prints one line. After a cell that changed the page, the fresh page state is printed automatically unless the cell already looked (state/find/read/table/list/links), so you rarely need a separate look.
-- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones; await bu.upload(t, 'name.txt', 'content') writes that workspace file (omit content to use an existing one) and sets it on the file input (t is often "Choose File" or its id).
-  t = a numeric id from bu.state()/bu.find(), the exact accessible name or a unique prefix of it, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
-- Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Always pass {pick} on autocomplete fields; never {enter:true} there.
-- Target controls by their visible name, not ids: names survive re-renders and navigation, so a whole flow chains in one call, e.g. await bu.click('Business'); await bu.fill('Company', 'Acme'); await bu.select('Plan', 'Pro'); await bu.check('Monthly billing', true); await bu.click('Continue'). Use ids only when names are ambiguous.
-- Deliver data you already extracted with finish_from_js({expression: 'rows'}) instead of retyping it. Take a screenshot only when the page's text did not give you what you need.
-- Never construct opaque or encoded URL parameters (base64/protobuf tokens); use the site's controls or URLs you have observed.
-- If an interaction fails, try one different route (ids from bu.find, another control, keyboard) before reporting that you are blocked.
+- Chain every action you already know into ONE javascript call, targeting controls by their visible name: await bu.fill('Email *', 'ada@example.com'); await bu.select('Country *', 'Canada'); await bu.check('I agree to the terms', true); await bu.upload('Choose File', 'cv.txt', 'CV of Ada'); await bu.click('Submit'). Each action waits for the page to settle (about 1 s at most, up to 3 s while a new page loads), prints one line, and throws if it fails, which stops the chain. After a cell that changed the page, the fresh visible page state is printed automatically.
+- Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones; await bu.upload(t, 'name.txt', 'content') writes that workspace file (omit content to use an existing one) and sets it on the file input.
+  t = the control's accessible name or a unique prefix of it (nothing fuzzy), a numeric id from bu.state()/bu.find(), or {name, role}. Use ids only when names are ambiguous; they change after navigation. NOT_FOUND/AMBIGUOUS errors list candidates and nothing is executed.
+- Autocomplete fields: await bu.fill(t, 'Berl', {pick: 'Berlin, Germany'}) types, waits for suggestions and clicks that one. Always pass {pick} on autocomplete fields; never {enter:true} there.
+- If an interaction fails, try one different route (another control, ids from bu.find, the keyboard) before reporting that you are blocked.
 - JavaScript alert/confirm/prompt dialogs are accepted automatically; their text is printed as [dialog ...] after the action.
-- Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids.
-- Read without dumping HTML: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows as objects keyed by column headers; await bu.list(i?) -> [{text, links}]; await bu.links('filter') -> [{name,url}]. Each prints a count, fields and a sample.
-- Many pages: const rows = await bu.map(urls, () => ({title: document.title, price: document.querySelector('.price')?.textContent}), {concurrency: 6}) opens pages in parallel background tabs with per-host politeness and 429 backoff; returns [{url, ok, status, value|error}] and saves partial results to the workspace. {mode:'fetch'} fetches over HTTP instead and calls extract(text, {url,status}) in Node. Never loop page.goto over many URLs.
-- Work longer than ~2 minutes: const id = bu.job('name', async progress => {...}); then await bu.wait(id) blocks up to 150 s, prints progress and returns {done, value}. Never poll with sleep loops or "alive" prints.
-- NEVER write blind sleeps (setTimeout/new Promise delays/sleep) to wait for pages. Actions already settle. For a specific condition use await bu.waitForText('Results') or await page.waitFor(predicate).
-- Inspect only when the next step depends on content you have not seen.
-- Result pages: read rows with bu.list() or bu.read(); if the page says it is loading or fetching, bu.waitForText the result, then read again before concluding.
-- When the deliverables are ready, write all files in one javascript call and call finish or finish_from_js in that same response; do not spend a separate turn re-reading files you just wrote.
-- Timestamps: every bu line shows the UTC time it observed the page ('at ...Z'). Use those printed times for observation and access times in deliverables. Never generate, backfill or guess times or dates: new Date() at the end of the work is not an observation time.
+- Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids. Read: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows keyed by column headers.
+- Never write blind sleeps (setTimeout, sleep) to wait for pages; actions already settle. For a specific condition use await bu.waitForText('Results').
+- Result pages: if the page says it is loading, bu.waitForText the result, then read again before concluding.
+- Deliver data you already extracted with finish_from_js({expression: 'rows'}) instead of retyping it. Take a screenshot only when the page's text did not give you what you need.
 `;
 
 /** Fast, strict accessibility-tree helpers for the persistent REPL. Raw page/CDP stays available. */
@@ -156,33 +148,17 @@ export class AxHelpers {
   /** Set by mutations; the worker prints a fresh compact state after such a cell. */
   dirty = false;
   private busy = false;
-  private jobs = new Map<
-    string,
-    {
-      name: string;
-      promise: Promise<unknown>;
-      log: string[];
-      seen: number;
-      done: boolean;
-      value?: unknown;
-      error?: string | undefined;
-      started: number;
-    }
-  >();
-  private mapCount = 0;
-  // Observation times are printed, never reconstructed later by the model.
-  private at() {
-    return ` at ${new Date().toISOString().slice(0, 19)}Z`;
-  }
-
   constructor(
     private page: () => Page,
-    private tabs: () => Tabs,
     private browser: () => CDP,
     private workspace: string,
     private log: (text: string) => void,
-    private webSearch?: { url: string; token: string },
-  ) {}
+    search?: { url: string; token: string },
+  ) {
+    this.#search = search;
+  }
+
+  #search: { url: string; token: string } | undefined;
 
   private inflight = new Map<string, Map<string, number>>();
   private lastNet = new Map<string, number>();
@@ -200,7 +176,7 @@ export class AxHelpers {
         if (method === 'Page.javascriptDialogOpening') {
           const d = raw as { type: string; message: string; defaultPrompt?: string };
           this.dialogs.push(
-            `[dialog ${d.type}${this.at()}] ${JSON.stringify(clip(d.message, 300))} (accepted)`,
+            `[dialog ${d.type}] ${JSON.stringify(clip(d.message, 300))} (accepted)`,
           );
           void cdp
             .send(
@@ -252,7 +228,8 @@ export class AxHelpers {
     const quiet = options.quietMs ?? 80;
     const start = Date.now();
     const session = await this.trackNetwork(page).catch(() => undefined);
-    while (Date.now() - start < cap) {
+    let limit = cap;
+    while (Date.now() - start < limit) {
       try {
         const probe = await page.evaluate(() => {
           const w = window as unknown as { __buObs?: MutationObserver; __buLast: number };
@@ -269,6 +246,7 @@ export class AxHelpers {
           return { idle: performance.now() - w.__buLast, ready: document.readyState };
         });
         const now = Date.now();
+        if (probe.ready === 'loading') limit = Math.max(cap, 3000); // navigations need longer than in-page updates
         probe.idle = Math.min(probe.idle, now - start); // quiet must be observed after this action began
         const pending = session
           ? [...(this.inflight.get(session)?.values() ?? [])].filter((t) => now - t < 1500).length
@@ -277,7 +255,9 @@ export class AxHelpers {
         if (probe.ready !== 'loading' && probe.idle >= quiet && pending === 0 && netIdle >= quiet)
           return { why: 'quiet', ready: probe.ready, ms: now - start };
       } catch (error) {
-        if (!isContextLoss(error)) throw error; // navigation in progress: wait for the new document
+        // Navigation in progress: wait for the new document. Anything else ends the wait, never the action.
+        if (!isContextLoss(error))
+          return { why: 'error', ready: 'unknown', ms: Date.now() - start };
       }
       await delay(40);
     }
@@ -420,16 +400,16 @@ export class AxHelpers {
       text: clip(textParts.join('\n'), limit),
     };
     this.log(
-      `[state${this.at()}] ${result.title} | ${result.url}${this.flushDialogs()}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
+      `[state] ${result.title} | ${result.url}${this.flushDialogs()}\n${result.controls.map(brief).join('\n')}${result.more ? `\n… ${result.more} more controls: bu.find('word')` : ''}\n[text] ${result.text}`,
     );
     return printed(result, '[state printed above]');
   }
 
   /** Web search through the host's endpoint (Browser Use Cloud's /api/v4/search contract), no browser tab. */
   async search(query: string | string[]) {
-    if (!this.webSearch)
+    if (!this.#search)
       throw new Error('bu.search needs the webSearch option; search in the browser instead.');
-    const { url, token } = this.webSearch;
+    const { url, token } = this.#search;
     const queries = Array.isArray(query) ? query : [query];
     if (queries.length > 6) throw new Error('bu.search takes at most 6 queries per call.');
     const results = await Promise.allSettled(
@@ -438,7 +418,7 @@ export class AxHelpers {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: q }),
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(10_000),
         });
         if (!response.ok)
           throw new Error(
@@ -465,7 +445,7 @@ export class AxHelpers {
 
   private logSerp(query: string, rows: SerpRow[]) {
     this.log(
-      `[search ${JSON.stringify(query)}${this.at()}] ${rows.length} result(s)\n${rows
+      `[search ${JSON.stringify(query)}] ${rows.length} result(s)\n${rows
         .map((r, i) => `${i + 1}. ${clip(r.title, 90)} | ${r.url} | ${clip(r.snippet, 300)}`)
         .join('\n')}`,
     );
@@ -480,7 +460,7 @@ export class AxHelpers {
       .filter((n) => CONTROLS.has(n.role) || n.role === 'StaticText' || n.role === 'heading')
       .filter((n) => norm(n.name).includes(q) || norm(n.value).includes(q))
       .slice(0, options.max ?? 25);
-    this.log(`[find "${query}"${this.at()}] ${hits.length} hit(s)\n${hits.map(brief).join('\n')}`);
+    this.log(`[find "${query}"] ${hits.length} hit(s)\n${hits.map(brief).join('\n')}`);
     return hits;
   }
 
@@ -518,7 +498,7 @@ export class AxHelpers {
       matches = prefer(
         usable.filter((n) => norm(n.name) === norm(name) && (!role || n.role === role)),
       );
-      // Sites append details to names ("Done. Search for…", "October 14, 2026, 97 US dollars"); a unique prefix is still exact enough.
+      // Sites append details to names (prices, counts, hints); a unique prefix is still exact enough.
       if (!matches.length && norm(name).length >= 3)
         matches = prefer(
           usable.filter((n) => norm(n.name).startsWith(norm(name)) && (!role || n.role === role)),
@@ -615,7 +595,7 @@ export class AxHelpers {
         .info()
         .catch(() => ({ url: '?', title: '?' }));
       this.log(
-        `[ok${this.at()}] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}${this.flushDialogs()}`,
+        `[ok] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}${this.flushDialogs()}`,
       );
       return {
         ok: true,
@@ -640,6 +620,7 @@ export class AxHelpers {
   async goto(url: string) {
     return this.act('goto', url, async () => {
       const page = this.page();
+      this.attempted = true;
       const result = await page.cdp('Page.navigate', { url });
       if (result.errorText) throw new Error(`Navigation failed: ${result.errorText}`);
       const status = await this.status(page);
@@ -1028,7 +1009,7 @@ export class AxHelpers {
     const first = rows[0];
     const fields = first && typeof first === 'object' ? Object.keys(first as object) : [];
     this.log(
-      `[${kind}${this.at()}] ${rows.length} row(s)${fields.length ? `; fields: ${fields.join(', ')}` : ''}${extra}\n${rows
+      `[${kind}] ${rows.length} row(s)${fields.length ? `; fields: ${fields.join(', ')}` : ''}${extra}\n${rows
         .slice(0, 3)
         .map((r) => clip(JSON.stringify(r), 300))
         .join('\n')}`,
@@ -1143,7 +1124,7 @@ export class AxHelpers {
     const merged = lines.filter((l, i) => l !== lines[i - 1]);
     const shown = 25;
     this.log(
-      `[read${region ? ` ${region}` : ''}${this.at()}] ${merged.length} line(s) | ${info.url}\n${clip(merged.slice(0, shown).join('\n'), shown * 100)}${merged.length > shown ? `\n… ${merged.length - shown} more lines in the returned array` : ''}`,
+      `[read${region ? ` ${region}` : ''}] ${merged.length} line(s) | ${info.url}\n${clip(merged.slice(0, shown).join('\n'), shown * 100)}${merged.length > shown ? `\n… ${merged.length - shown} more lines in the returned array` : ''}`,
     );
     return merged;
   }
@@ -1155,7 +1136,7 @@ export class AxHelpers {
     const found = this.pick(nodes, new Set(['table', 'grid', 'treegrid']), which, byId);
     const tables = Array.isArray(found) ? found : found ? [found] : [];
     if (!tables.length) {
-      this.log('[table] no table/grid on this page; use bu.list(), bu.read() or page.evaluate');
+      this.log('[table] no table/grid on this page; use bu.read() or page.evaluate');
       return [];
     }
     if (Array.isArray(found) && found.length > 1)
@@ -1201,285 +1182,5 @@ export class AxHelpers {
     } else rows = matrix.map((r) => r.map((c) => c.text));
     this.summarize('table', rows);
     return rows;
-  }
-
-  /** List items with their text and links. Default: the list with the most items. */
-  async list(which?: number | string) {
-    this.dirty = false;
-    const { nodes, byId } = await this.tree();
-    const found = this.pick(nodes, new Set(['list', 'feed', 'listbox', 'tree']), which, byId);
-    const lists = Array.isArray(found) ? found : found ? [found] : [];
-    const itemsOf = (l: RawAX) =>
-      (l.childIds ?? [])
-        .map((c) => byId.get(c))
-        .filter(
-          (n): n is RawAX =>
-            !!n && ['listitem', 'article', 'option', 'treeitem'].includes(String(n.role?.value)),
-        );
-    const best = lists
-      .map((l) => ({ l, items: itemsOf(l) }))
-      .sort((a, b) => b.items.length - a.items.length)[0];
-    if (!best?.items.length) {
-      this.log('[list] no list items found; use bu.read() or page.evaluate');
-      return [];
-    }
-    const rows = best.items.map((item) => {
-      const links: { name: string; url: string }[] = [];
-      const walk = (n: RawAX | undefined) => {
-        if (!n) return;
-        if (String(n.role?.value) === 'link') {
-          const url = AxHelpers.prop(n, 'url');
-          if (url) links.push({ name: String(n.name?.value ?? '').trim(), url: String(url) });
-        }
-        for (const c of n.childIds ?? []) walk(byId.get(c));
-      };
-      walk(item);
-      return { text: AxHelpers.text(byId, item, 800), links: links.slice(0, 5) };
-    });
-    this.summarize(
-      'list',
-      rows,
-      lists.length > 1 && typeof which === 'undefined' ? ` (largest of ${lists.length} lists)` : '',
-    );
-    return rows;
-  }
-
-  /** All links on the page, optionally filtered by name/url substring. */
-  async links(filter?: string) {
-    this.dirty = false;
-    const { nodes } = await this.tree();
-    const f = filter ? norm(filter) : '';
-    const seen = new Set<string>();
-    const rows = nodes
-      .filter((n) => !n.ignored && String(n.role?.value) === 'link')
-      .map((n) => ({
-        name: String(n.name?.value ?? '').trim(),
-        url: String(AxHelpers.prop(n, 'url') ?? ''),
-      }))
-      .filter((l) => l.url && (!f || norm(l.name).includes(f) || l.url.toLowerCase().includes(f)))
-      .filter((l) => (seen.has(l.url + l.name) ? false : (seen.add(l.url + l.name), true)));
-    this.summarize('links', rows);
-    return rows;
-  }
-
-  /**
-   * Visit many URLs in parallel. mode 'tab' (default) runs extract in each page; mode 'fetch' runs
-   * extract(text, {url,status}) in Node on the raw HTTP body. Per-host politeness and 429/503 backoff
-   * happen here. Item failures never throw; partial results are saved to the workspace as they arrive.
-   */
-  async map<T>(
-    urls: string[],
-    extract?: ((...args: never[]) => T) | string,
-    options: {
-      concurrency?: number;
-      perHost?: number;
-      minGapMs?: number;
-      mode?: 'tab' | 'fetch';
-      retries?: number;
-      timeoutMs?: number;
-    } = {},
-  ) {
-    const { results, failed, file } = await this.crawl(urls, extract, options, (l) => this.log(l));
-    this.summarize(
-      'map',
-      results.filter((r) => r.ok).map((r) => r.value),
-      `; ${failed.length} failed${failed.length ? ` e.g. ${clip(JSON.stringify(failed.slice(0, 2)), 300)}` : ''}; saved ${file}`,
-    );
-    return results;
-  }
-
-  private async crawl(
-    urls: string[],
-    extract: unknown,
-    options: {
-      concurrency?: number;
-      perHost?: number;
-      minGapMs?: number;
-      mode?: 'tab' | 'fetch';
-      retries?: number;
-      timeoutMs?: number;
-    },
-    say: (line: string) => void,
-  ) {
-    if (!Array.isArray(urls) || !urls.every((u) => typeof u === 'string'))
-      throw new Error('map needs an array of URL strings.');
-    const concurrency = Math.max(1, Math.min(options.concurrency ?? 6, 12));
-    const perHost = Math.max(1, options.perHost ?? 2);
-    const minGap = options.minGapMs ?? 250;
-    const retries = options.retries ?? 2;
-    const timeoutMs = options.timeoutMs ?? 25000;
-    const mode = options.mode ?? 'tab';
-    // Scratch under the host journal dir so partial results never masquerade as deliverables.
-    const file = join(this.workspace, '.browser-use', `bu-map-${++this.mapCount}.json`);
-    await mkdir(join(this.workspace, '.browser-use'), { recursive: true }).catch(() => {});
-    const results: {
-      url: string;
-      ok: boolean;
-      status?: number;
-      value?: unknown;
-      error?: string;
-      observedAt?: string;
-    }[] = new Array(urls.length);
-    const active = new Map<string, number>();
-    const lastStart = new Map<string, number>();
-    const started = Date.now();
-    let next = 0;
-    let done = 0;
-    const host = (u: string) => {
-      try {
-        return new URL(u).host;
-      } catch {
-        return '';
-      }
-    };
-    const one = async (url: string) => {
-      const h = host(url);
-      for (let attempt = 0; ; attempt++) {
-        while ((active.get(h) ?? 0) >= perHost || Date.now() - (lastStart.get(h) ?? 0) < minGap)
-          await delay(25);
-        active.set(h, (active.get(h) ?? 0) + 1);
-        lastStart.set(h, Date.now());
-        try {
-          const r =
-            mode === 'fetch'
-              ? await this.fetchOne(url, extract, timeoutMs)
-              : await this.tabOne(url, extract, timeoutMs);
-          if ((r.status === 429 || r.status === 503) && attempt < retries) {
-            const wait = Math.min(30000, (r.retryAfter ?? 2 ** attempt * 2) * 1000);
-            say(
-              `[map] ${h} http ${r.status}; backing off ${Math.round(wait / 1000)}s (attempt ${attempt + 1}/${retries})`,
-            );
-            await delay(wait);
-            continue;
-          }
-          return {
-            url,
-            ok: r.status === 0 || (r.status >= 200 && r.status < 400),
-            status: r.status,
-            value: r.value,
-            observedAt: new Date().toISOString(),
-          };
-        } catch (error) {
-          if (attempt < retries && /timeout|net::ERR|ECONNRESET|fetch failed/i.test(String(error)))
-            continue;
-          return {
-            url,
-            ok: false,
-            error: clip(error instanceof Error ? error.message : String(error), 300),
-          };
-        } finally {
-          active.set(h, (active.get(h) ?? 1) - 1);
-        }
-      }
-    };
-    const flush = () =>
-      writeFile(file, JSON.stringify(results.filter(Boolean), null, 1)).catch(() => {});
-    const step = Math.max(1, Math.ceil(urls.length / 10));
-    await Promise.all(
-      Array.from({ length: Math.min(concurrency, urls.length) }, async () => {
-        while (next < urls.length) {
-          const i = next++;
-          results[i] = await one(urls[i]!);
-          done++;
-          if (done % step === 0 || done === urls.length) {
-            const ok = results.filter((r) => r?.ok).length;
-            say(
-              `[map] ${done}/${urls.length} done, ${ok} ok, ${done - ok} failed, ${((Date.now() - started) / 1000).toFixed(1)}s`,
-            );
-            await flush();
-          }
-        }
-      }),
-    );
-    await flush();
-    return { results, failed: results.filter((r) => !r.ok), file };
-  }
-
-  private async fetchOne(url: string, extract: unknown, timeoutMs: number) {
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: {
-        'user-agent':
-          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36',
-        accept: 'text/html,application/json;q=0.9,*/*;q=0.8',
-      },
-      redirect: 'follow',
-    });
-    const retryAfter = Number(response.headers.get('retry-after')) || undefined;
-    const text = await response.text();
-    const value =
-      typeof extract === 'function'
-        ? await (extract as (t: string, m: object) => unknown)(text, {
-            url,
-            status: response.status,
-          })
-        : text.slice(0, 20000);
-    return { status: response.status, value, retryAfter };
-  }
-
-  private async tabOne(url: string, extract: unknown, timeoutMs: number) {
-    const page = await this.tabs().open();
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      const nav = await Promise.race([
-        page.cdp('Page.navigate', { url }),
-        new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
-        }),
-      ]);
-      if ((nav as { errorText?: string }).errorText)
-        throw new Error(`Navigation failed: ${(nav as { errorText?: string }).errorText}`);
-      const status = await this.status(page);
-      await this.settle({ capMs: 1500, page });
-      let value: unknown;
-      if (typeof extract === 'function' || typeof extract === 'string')
-        value = await page.evaluate(extract as string);
-      else
-        value = await page.evaluate(() => ({
-          title: document.title,
-          text: (document.body?.innerText ?? '').slice(0, 4000),
-        }));
-      return { status, value, retryAfter: undefined as number | undefined };
-    } finally {
-      clearTimeout(timer);
-      await page.close().catch(() => {});
-    }
-  }
-
-  /** Start long work in the background; bu.wait(job) blocks for it with streamed progress. */
-  job<T>(name: string, fn: (progress: (line: string) => void) => Promise<T>) {
-    const id = `${name}-${this.jobs.size + 1}`;
-    const job = {
-      name,
-      log: [] as string[],
-      seen: 0,
-      done: false,
-      started: Date.now(),
-      promise: undefined as unknown as Promise<unknown>,
-      value: undefined as unknown,
-      error: undefined as string | undefined,
-    };
-    job.promise = fn((line) =>
-      job.log.push(`${((Date.now() - job.started) / 1000).toFixed(0)}s ${line}`),
-    )
-      .then((v) => ((job.value = v), v))
-      .catch((e) => ((job.error = e instanceof Error ? e.message : String(e)), undefined))
-      .finally(() => (job.done = true));
-    this.jobs.set(id, job);
-    this.log(`[job ${id}] started; await bu.wait('${id}') to block until it finishes`);
-    return id;
-  }
-
-  async wait(id: string, options: { timeoutMs?: number } = {}) {
-    const job = this.jobs.get(id);
-    if (!job) throw new Error(`No job ${id}. Jobs: ${[...this.jobs.keys()].join(', ')}`);
-    const timeout = options.timeoutMs ?? 150000;
-    await Promise.race([job.promise, delay(timeout)]);
-    const fresh = job.log.slice(job.seen);
-    job.seen = job.log.length;
-    this.log(
-      `[job ${id}] ${job.done ? (job.error ? `failed: ${job.error}` : 'done') : `still running after ${((Date.now() - job.started) / 1000).toFixed(0)}s; call bu.wait again`}${fresh.length ? `\n${fresh.slice(-15).join('\n')}` : ''}`,
-    );
-    return job.done ? { done: true, value: job.value, error: job.error } : { done: false };
   }
 }

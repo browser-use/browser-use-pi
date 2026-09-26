@@ -92,6 +92,16 @@ const realm = createContext(
 );
 if (executionContextId === undefined)
   throw new Error('Could not initialize the JavaScript context.');
+const bu =
+  config.mode === 'ultrafast'
+    ? new AxHelpers(
+        () => Reflect.get(realm, 'page') as Page,
+        () => browser,
+        config.workspace,
+        (text) => (Reflect.get(realm, 'console') as Console).log(text),
+        config.webSearch,
+      )
+    : undefined;
 Object.assign(realm, {
   global: realm, // Node's global alias refers to this REPL realm, not the worker host.
   // Reject values JSON would silently drop or change. Dates/toJSON use normal JSON semantics.
@@ -129,18 +139,7 @@ Object.assign(realm, {
   browser,
   tabs,
   page,
-  ...(config.mode === 'ultrafast'
-    ? {
-        bu: new AxHelpers(
-          () => Reflect.get(realm, 'page') as Page,
-          () => tabs,
-          () => browser,
-          config.workspace,
-          (text) => (Reflect.get(realm, 'console') as Console).log(text),
-          config.webSearch,
-        ),
-      }
-    : {}),
+  ...(bu ? { bu } : {}),
   workspace: config.workspace,
   async reconnect() {
     const targetId = (Reflect.get(realm, 'page') as Page)?.targetId;
@@ -340,7 +339,6 @@ process.on('message', async (message: WorkerRequest) => {
     failure = error instanceof Error ? error.message : String(error);
   } finally {
     // After a cell that changed the page through bu.*, show the resulting state without another model turn.
-    const bu = Reflect.get(realm, 'bu') as AxHelpers | undefined;
     if (bu?.dirty) {
       bu.dirty = false;
       // Full AX snapshots of very large pages can stall the renderer; don't add one the model didn't ask for.
