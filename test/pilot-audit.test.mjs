@@ -60,7 +60,10 @@ test('high-cap ultrafast run passes 75 turns and preserves the helper prompt', a
   let calls = 0;
   const reply = (context) => {
     calls++;
-    assert.match(getCurrentSystemPrompt(context.messages), /Fast browser helpers/);
+    assert.match(
+      getCurrentSystemPrompt(context.messages),
+      /(?:Fast browser helpers|Browser action helpers)/,
+    );
     assert.doesNotMatch(JSON.stringify(context.messages), /Budget nearly exhausted/);
     return fauxAssistantMessage(
       fauxToolCall(
@@ -77,7 +80,10 @@ test('high-cap ultrafast run passes 75 turns and preserves the helper prompt', a
     models,
     mode: 'ultrafast',
     telemetry: false,
-    browser: { profileDir: process.env.PILOT_PROFILE },
+    browser: {
+      executablePath: process.env.BROWSER_EXECUTABLE_PATH,
+      profileDir: process.env.PILOT_PROFILE,
+    },
   });
   try {
     const run = await agent.run('Exercise high budget', { maxSteps: 10000, timeoutMs: 60000 });

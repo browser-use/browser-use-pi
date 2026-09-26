@@ -40,7 +40,7 @@ before(async () => {
     model: 'openai/gpt-6-astra',
     mode: 'ultrafast',
     telemetry: false,
-    browser: { executablePath: '/dev/shm/pi-pr15-review-20260926/chromium', profileDir: profile },
+    browser: { executablePath: process.env.BROWSER_EXECUTABLE_PATH, profileDir: profile },
     workspace: profile + '/work',
     operationTimeoutMs: 3000,
     cellTimeoutMs: 10000,
@@ -148,4 +148,23 @@ test('network cap reports input sent, then explicit condition observes completio
   assert.match(r.text, /settled cap/);
   assert.doesNotMatch(r.text, /\[verified\]/);
   assert.equal(await value("await bu.waitForText('Ready now')"), 'true');
+});
+
+test('raw browser evaluation, screenshot and files remain available beside helpers', async () => {
+  await open();
+  const r = await agent.execute(
+    "await bu.click('After action');await checkpoint('exact-evidence.json',{marker:'exact-73'});await screenshot();",
+  );
+  assert.equal((r.text.match(/\[state\]/g) || []).length, 1);
+  assert.ok(r.images?.length > 0);
+  assert.match(
+    await value("require('node:fs').readFileSync('exact-evidence.json','utf8')"),
+    /exact-73/,
+  );
+  assert.equal(await value('await page.evaluate(()=>window.afterClicks)'), '1');
+});
+test('minimal core rejects unobserved name prefixes without clicking', async () => {
+  await open();
+  await assert.rejects(agent.execute("await bu.click('After')"), /NOT_FOUND/);
+  assert.equal(await value('await page.evaluate(()=>window.afterClicks)'), '0');
 });
