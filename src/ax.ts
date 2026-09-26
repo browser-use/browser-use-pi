@@ -133,6 +133,8 @@ Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw
 - Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones; await bu.upload(t, 'name.txt', 'content') writes that workspace file (omit content to use an existing one) and sets it on the file input (t is often "Choose File" or its id).
   t = a numeric id from bu.state()/bu.find(), the exact accessible name or a unique prefix of it, or {name, role}. No fuzzy matching: NOT_FOUND/AMBIGUOUS errors list candidates with ids and nothing is executed. Ids expire after navigation.
 - Autocomplete fields (cities, airports, addresses): await bu.fill(t, 'Zurich', {pick: 'Zürich, Switzerland'}) types, waits for suggestions and clicks that one. Don't press Enter on a suggestion list you have not seen.
+- Target controls by their visible name, not ids: names survive re-renders and navigation, so a whole flow chains in one call, e.g. await bu.click('Business'); await bu.fill('Company', 'Acme'); await bu.select('Plan', 'Pro'); await bu.check('Monthly billing', true); await bu.click('Continue'). Use ids only when names are ambiguous.
+- Deliver data you already extracted with finish_from_js({expression: 'rows'}) instead of retyping it. Take a screenshot only when the page's text did not give you what you need.
 - Never construct opaque or encoded URL parameters (base64/protobuf tokens); use the site's controls or URLs you have observed.
 - If an interaction fails, try one different route (ids from bu.find, another control, keyboard) before reporting that you are blocked.
 - JavaScript alert/confirm/prompt dialogs are accepted automatically; their text is printed as [dialog ...] after the action.
@@ -246,8 +248,8 @@ export class AxHelpers {
    */
   async settle(options: { capMs?: number; quietMs?: number; page?: Page } = {}) {
     const page = options.page ?? this.page();
-    const cap = options.capMs ?? 2000;
-    const quiet = options.quietMs ?? 250;
+    const cap = options.capMs ?? 800;
+    const quiet = options.quietMs ?? 80;
     const start = Date.now();
     const session = await this.trackNetwork(page).catch(() => undefined);
     while (Date.now() - start < cap) {
@@ -276,7 +278,7 @@ export class AxHelpers {
           probe.ready !== 'loading' &&
           probe.idle >= quiet &&
           pending === 0 &&
-          netIdle >= Math.min(quiet, 150)
+          netIdle >= quiet
         )
           return { why: 'quiet', ready: probe.ready, ms: now - start };
       } catch (error) {
