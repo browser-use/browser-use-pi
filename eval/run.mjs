@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { auditedStream } from './audit.mjs';
 
 export function parseOptions(value) {
   const allowed = new Set([
@@ -18,6 +19,9 @@ export function parseOptions(value) {
     'evidence_format',
     'research_tools',
     'delivery_review',
+    'mode',
+    'service_tier',
+    'cell_timeout_ms',
   ]);
   if (!value || Array.isArray(value) || typeof value !== 'object')
     throw new Error('options must be an object');
@@ -66,6 +70,15 @@ export function parseOptions(value) {
     typeof options.browser_allow_resizing !== 'boolean'
   )
     throw new Error('browser_allow_resizing must be boolean');
+  if (options.mode !== undefined && !['default', 'ultrafast'].includes(options.mode))
+    throw new Error('Invalid mode');
+  if (options.service_tier !== undefined && !['default', 'priority'].includes(options.service_tier))
+    throw new Error('Invalid service_tier');
+  if (
+    options.cell_timeout_ms !== undefined &&
+    (!Number.isSafeInteger(options.cell_timeout_ms) || options.cell_timeout_ms <= 0)
+  )
+    throw new Error('Invalid cell_timeout_ms');
   return options;
 }
 
@@ -157,6 +170,8 @@ export async function main() {
   let browser, agent, observer, Laminar, root;
   const spans = new Map();
   let modelSpan;
+  const modelRequests = [];
+  const pendingAccounting = [];
   let envelope = {
     status: 'failed',
     final_output: '',
@@ -225,13 +240,23 @@ export async function main() {
     if (!browser.id || !browser.cdpUrl)
       throw new Error('Browser provider returned no browser id/CDP endpoint');
     observer = CDP.lazy(browser.cdpUrl, 1500);
+    const { builtinModels } = await import('@earendil-works/pi-ai/providers/all');
+    const models = builtinModels();
     let deliveryReviewSubmissions = 0;
     agent = await BrowserUse.create({
       model,
+      mode: options.mode ?? 'default',
+      telemetry: false,
+      streamFn: auditedStream(
+        models.streamSimple.bind(models),
+        modelRequests,
+        pendingAccounting,
+        options.service_tier,
+      ),
       reasoning: options.reasoning_effort,
       browser: { cdpUrl: browser.cdpUrl },
       workspace: outputDir,
-      cellTimeoutMs: 120000,
+      cellTimeoutMs: options.cell_timeout_ms ?? 120000,
       operationTimeoutMs: 20000,
       researchTools: options.research_tools ?? options.evidence_format === 'findings',
       ...(options.delivery_review
@@ -495,6 +520,13 @@ export async function main() {
       envelope.metadata.sdk_audit_archive_error = error.message;
       console.error(`SDK audit archive unavailable: ${error.message}`);
     }
+    await Promise.allSettled(pendingAccounting);
+    await writeFile(join(workspace, 'model-requests.json'), JSON.stringify(modelRequests, null, 2));
+    envelope.artifacts.push('model-requests.json');
+    envelope.metadata.inference_requests = modelRequests;
+    envelope.metadata.eval_max_steps = Number(env.EVAL_MAX_STEPS || 35);
+    envelope.metadata.eval_overlay =
+      'PR15 measurement-only mode wiring and inclusive model/HTTP ledger';
     await writeFile(resultPath, JSON.stringify(envelope, null, 2) + '\n');
     if (root) {
       Laminar.withSpan(root, () => Laminar.setSpanOutput(envelope), false);
