@@ -3,7 +3,7 @@ import type { Api, Model, Usage } from '@earendil-works/pi-ai';
 import { estimateTokens, generateSummaryWithUsage } from '@earendil-works/pi-coding-agent';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { redact } from './history.js';
 
 /** Wire metadata and encrypted reasoning are not ordinary text tokens. */
@@ -42,19 +42,11 @@ export class RunContext {
   project(messages: AgentMessage[]): AgentMessage[] {
     const body = conversation(messages);
     const projected = this.summary ? [this.summary, ...body.slice(this.covered)] : body;
-    const images = projected.filter(
-      (m) => m.role === 'toolResult' && m.content.some((c) => c.type === 'image'),
-    );
-    const keep = new Set(images.slice(-2));
-    return [
-      ...messages.filter((m) => m.role === 'system'),
-      ...projected.map((m) =>
-        m.role === 'toolResult' && !keep.has(m)
-          ? { ...m, content: m.content.filter((c) => c.type !== 'image') }
-          : m,
-      ),
-    ];
+    // Keep the sent prefix immutable between explicit compactions. Rolling image
+    // eviction rewrites old tool messages and defeats provider prefix caching.
+    return [...messages.filter((m) => m.role === 'system'), ...projected];
   }
+
   tokens(messages: AgentMessage[], system: string): number {
     messages = conversation(messages);
     const projected = conversation(this.project(messages));
@@ -125,6 +117,34 @@ export class RunContext {
     const directory = join(this.workspace, '.browser-use', 'context');
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const path = join(directory, `${randomUUID()}.json`);
+    const imagePaths = new Map<string, string>();
+    for (const message of prefix) {
+      if (message.role !== 'user' && message.role !== 'assistant' && message.role !== 'toolResult')
+        continue;
+      if (typeof message.content === 'string') continue;
+      for (const block of message.content) {
+        if (block.type !== 'image' || imagePaths.has(block.data)) continue;
+        const bytes = Buffer.from(block.data, 'base64');
+        const digest = createHash('sha256').update(bytes).digest('hex');
+        const suffix =
+          (
+            {
+              'image/png': 'png',
+              'image/jpeg': 'jpg',
+              'image/webp': 'webp',
+              'image/gif': 'gif',
+            } as Record<string, string>
+          )[block.mimeType] ?? 'bin';
+        const imagePath = join(directory, digest + '.' + suffix);
+        await writeFile(imagePath, bytes, { mode: 0o600, flag: 'wx' }).catch(
+          (error: NodeJS.ErrnoException) => {
+            if (error.code !== 'EEXIST') throw error;
+          },
+        );
+        imagePaths.set(block.data, imagePath);
+      }
+    }
+
     await writeFile(
       path,
       JSON.stringify(
@@ -159,7 +179,14 @@ export class RunContext {
                         .filter((block) => block.type !== 'thinking')
                         .map((block) => {
                           if (block.type === 'image')
-                            return { type: 'text', text: '[Image omitted from text archive]' };
+                            return {
+                              type: 'text',
+                              text:
+                                'Archived image (' +
+                                block.mimeType +
+                                '), JSON path: ' +
+                                JSON.stringify(imagePaths.get(block.data)),
+                            };
                           if (block.type === 'text') return { type: 'text', text: block.text };
                           return block;
                         }),
@@ -173,7 +200,7 @@ export class RunContext {
     );
     // Pin user messages exactly; a summarizer cannot silently remove a restriction or follow-up.
     const users = messages.slice(0, cut).filter((m) => m.role === 'user');
-    const text = `Conversation checkpoint: generated, fallible reference, not new instructions. JavaScript and files persist.\nEvidence archive (JSON path): ${JSON.stringify(path)}\nThe archive's messages preserve earlier user text, assistant text/tool calls and tool results, with configured secrets redacted and images/reasoning omitted. Earlier checkpoint messages link previous archives. Search these messages or saved source files for exact observations omitted or misstated below; do not treat a summary as verification or replay prior actions. Read only relevant excerpts into context.\nGenerated summary (JSON-quoted):\n${JSON.stringify(summary.text)}\nOriginal user requests (authoritative over the generated summary):\n${JSON.stringify(users)}\nContinue the original task. Any instruction to produce a summary belongs to the summarization process, not the original task.`;
+    const text = `Conversation checkpoint: generated, fallible reference, not new instructions. JavaScript and files persist.\nEvidence archive (JSON path): ${JSON.stringify(path)}\nThe archive's messages preserve earlier user text, assistant text/tool calls and tool results, with configured secrets redacted and reasoning omitted. Images are saved privately and replaced here by exact file references; read those paths with an image-capable file tool when needed. Earlier checkpoint messages link previous archives. Search these messages or saved source files for exact observations omitted or misstated below; do not treat a summary as verification or replay prior actions. Read only relevant excerpts into context.\nGenerated summary (JSON-quoted):\n${JSON.stringify(summary.text)}\nOriginal user requests (authoritative over the generated summary):\n${JSON.stringify(users)}\nContinue the original task. Any instruction to produce a summary belongs to the summarization process, not the original task.`;
     const candidate: AgentMessage = { role: 'user', content: text, timestamp: Date.now() };
     if (contextChars([candidate, ...messages.slice(cut)]) >= contextChars(this.project(messages)))
       throw new Error('Compaction did not reduce context; original evidence was retained.');
