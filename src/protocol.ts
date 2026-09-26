@@ -31,6 +31,8 @@ export interface WorkerConfig extends importPolicy {
   approveConnection?: boolean;
   workspace: string;
   targetId?: string;
+  focusTab?: boolean;
+  browserSwitching?: boolean;
   operationTimeoutMs: number;
   maxOutputChars: number;
 }
@@ -40,6 +42,7 @@ export type WorkerRequest =
 export type WorkerResponse =
   | { type: 'action'; action: BrowserAction }
   | { type: 'owned'; targetId: string }
+  | { type: 'endpoint'; endpoint: string }
   | { type: 'partial'; runId?: string; path: string; valueJson: string }
   | { type: 'ready'; targetId: string }
   | { type: 'result'; result: CellResult }
