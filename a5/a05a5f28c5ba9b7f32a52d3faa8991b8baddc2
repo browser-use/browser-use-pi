@@ -1,0 +1,19 @@
+src/prompt.ts
+  s_018f35c5d4f143::t_d1a9e779dc5d94 28-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a5a05a5f28c5ba9b7f32a52d3faa8991b8baddc2",
+  "prompts": {},
+  "sessions": {
+    "s_018f35c5d4f143": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_018f35c5d4f143",
+        "model": "unknown"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

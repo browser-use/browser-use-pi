@@ -1,0 +1,21 @@
+src/page.ts
+  s_ee498c9308e986::t_643755eb57b9c7 144-154
+src/prompt.ts
+  s_ee498c9308e986::t_e1b6c2105c1e36 16,29-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2bf2fdc423b6e6d5db660e673fa85000e3204e6f",
+  "prompts": {},
+  "sessions": {
+    "s_ee498c9308e986": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ee498c9308e986",
+        "model": "unknown"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

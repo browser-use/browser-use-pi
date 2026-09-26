@@ -1,0 +1,20 @@
+src/ax.ts
+  s_4bd8ed662096a6::t_02ec995fea3018 524,530-534,539-584
+  s_4bd8ed662096a6::t_25cf31b915d82e 52,106,585-604
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ca3086824cb25be99b29f7e337e3aafe97c0a0ca",
+  "prompts": {},
+  "sessions": {
+    "s_4bd8ed662096a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76a213b-b710-4a4b-84c9-44a9fd5fec43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

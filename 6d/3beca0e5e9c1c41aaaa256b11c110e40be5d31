@@ -1,0 +1,19 @@
+src/ax.ts
+  s_c8eb659a678b69::t_c4bb97d5143bc5 136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d3beca0e5e9c1c41aaaa256b11c110e40be5d31",
+  "prompts": {},
+  "sessions": {
+    "s_c8eb659a678b69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_c8eb659a678b69",
+        "model": "unknown"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+eval/run.mjs
+  s_4bd8ed662096a6::t_4f5ed58135f10c 337-345,370
+src/agent.ts
+  s_4bd8ed662096a6::t_cd36f98516a75e 17,208
+src/index.ts
+  s_4bd8ed662096a6::t_5764a28421ca24 83-87,149
+src/prompt.ts
+  s_4bd8ed662096a6::t_5fdd155cc9a45e 1-4
+src/protocol.ts
+  s_4bd8ed662096a6::t_8a0d96a8c7f40b 29
+src/types.ts
+  s_4bd8ed662096a6::t_ce7a9fb7a9982f 30-31
+src/worker.ts
+  s_4bd8ed662096a6::t_c9f7aff5d4ac43 85-126,174-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd380988828dce1076b18ba9affdb87821e491e7",
+  "prompts": {},
+  "sessions": {
+    "s_4bd8ed662096a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76a213b-b710-4a4b-84c9-44a9fd5fec43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
