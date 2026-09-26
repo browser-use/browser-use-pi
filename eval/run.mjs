@@ -334,6 +334,15 @@ export async function main() {
       browser: { cdpUrl: browser.cdpUrl },
       workspace: outputDir,
       cellTimeoutMs: options.cell_timeout_ms,
+      // The platform's search proxy uses the cloud worker's names for the same endpoint.
+      ...(process.env.V4_GATEWAY_URL && process.env.V4_RUN_TOKEN
+        ? {
+            webSearch: {
+              url: `${process.env.V4_GATEWAY_URL}/api/v4/search`,
+              token: process.env.V4_RUN_TOKEN,
+            },
+          }
+        : {}),
       operationTimeoutMs: 20000,
       ...(options.semantic ? { semantic: true } : {}),
       ...(options.service_tier
@@ -358,7 +367,7 @@ export async function main() {
             },
           }
         : {}),
-      instructions: `${options.evidence_format === 'findings' ? 'Use browser UI, public search and source APIs for research; use files/scripts for processing.' : 'Use browser UI and page evaluation for research. Do not use web search.'} Do not read files outside the output workspace or inspect benchmark source, rubrics, judge code, or credentials. Save requested files incrementally in workspace.${viewport ? `\n${coordinatePrompt(viewport)}` : ''}`,
+      instructions: `${options.evidence_format === 'findings' ? 'Use browser UI, public search and source APIs for research; use files/scripts for processing.' : 'Use browser UI and page evaluation for research.'} Do not read files outside the output workspace or inspect benchmark source, rubrics, judge code, or credentials. Save requested files incrementally in workspace.${viewport ? `\n${coordinatePrompt(viewport)}` : ''}`,
     });
     const findings = options.evidence_format === 'findings';
     const steps = [];

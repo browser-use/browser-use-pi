@@ -80,6 +80,11 @@ export class BrowserUse {
     };
     if (options.highlightActions !== undefined && typeof options.highlightActions !== 'boolean')
       throw new Error('highlightActions must be boolean.');
+    if (
+      options.webSearch !== undefined &&
+      (typeof options.webSearch?.url !== 'string' || typeof options.webSearch?.token !== 'string')
+    )
+      throw new Error('webSearch must be {url, token}.');
     if (options.researchTools !== undefined && typeof options.researchTools !== 'boolean')
       throw new Error('researchTools must be boolean.');
     if (options.recording && typeof options.recording === 'object') {
@@ -141,6 +146,7 @@ export class BrowserUse {
     const runtime = new BrowserRuntime(
       {
         endpoint: browser.endpoint,
+        ...(options.webSearch ? { webSearch: options.webSearch } : {}),
         ...(options.allowedDomains !== undefined ? { allowedDomains: options.allowedDomains } : {}),
         ...(options.prohibitedDomains !== undefined
           ? { prohibitedDomains: options.prohibitedDomains }

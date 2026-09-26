@@ -27,6 +27,8 @@ export interface BrowserUseOptions extends DomainOptions {
   reasoning?: ThinkingLevel;
   /** Opt-in Pi read/write/edit/bash tools. Not a filesystem sandbox. */
   researchTools?: boolean;
+  /** Search endpoint with Browser Use Cloud's /api/v4/search contract; adds search() to the REPL. */
+  webSearch?: { url: string; token: string };
   tools?: AgentState['tools'];
   instructions?: string;
   operationTimeoutMs?: number;

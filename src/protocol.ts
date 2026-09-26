@@ -26,6 +26,7 @@ export interface WorkerConfig extends importPolicy {
   sensitiveData?: import('./policy.js').SensitiveData;
   redact?: string[];
   endpoint: string;
+  webSearch?: { url: string; token: string };
   recording?: boolean;
   highlightActions?: boolean;
   approveConnection?: boolean;

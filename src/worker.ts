@@ -82,6 +82,48 @@ evaluator.on('Runtime.executionContextCreated', ({ params }) => {
   if (params.context.name === 'browser-use') executionContextId = params.context.id;
 });
 evaluator.post('Runtime.enable');
+type SearchRow = { title: string; url: string; snippet: string };
+/** The cloud search endpoint's text is blocks of Title/URL/Published/Highlights separated by ---. */
+const searchRows = (text: string): SearchRow[] =>
+  text
+    .split('\n\n---\n\n')
+    .map((block) => ({
+      title: block.match(/^Title: (.*)$/m)?.[1] ?? '',
+      url: block.match(/^URL: (.*)$/m)?.[1] ?? '',
+      snippet:
+        block
+          .split(/^Highlights:\n|^Text: /m)[1]
+          ?.replace(/\s+/g, ' ')
+          .trim() ?? '',
+    }))
+    .filter((r) => r.url);
+
+/** search('q') or search(['q1', ...]) (max 6, in parallel): prints each hit and returns the rows. */
+async function webSearch(endpoint: { url: string; token: string }, query: string | string[]) {
+  const queries = Array.isArray(query) ? query : [query];
+  if (queries.length > 6) throw new Error('search takes at most 6 queries per call.');
+  const rows = await Promise.all(
+    queries.map(async (q) => {
+      const response = await fetch(endpoint.url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${endpoint.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok)
+        throw new Error(`search HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`);
+      const found = searchRows(((await response.json()) as { results: string }).results);
+      (Reflect.get(realm, 'console') as Console).log(
+        `[search ${JSON.stringify(q)}] ${found.length} result(s)\n${found
+          .map((r, i) => `${i + 1}. ${r.title} | ${r.url} | ${r.snippet.slice(0, 300)}`)
+          .join('\n')}`,
+      );
+      return found;
+    }),
+  );
+  return Array.isArray(query) ? Object.fromEntries(queries.map((q, i) => [q, rows[i]])) : rows[0];
+}
+
 const realm = createContext(
   {},
   {
@@ -129,6 +171,9 @@ Object.assign(realm, {
   tabs,
   page,
   workspace: config.workspace,
+  ...(config.webSearch
+    ? { search: (query: string | string[]) => webSearch(config.webSearch!, query) }
+    : {}),
   async reconnect() {
     const targetId = (Reflect.get(realm, 'page') as Page)?.targetId;
     browser.close();
