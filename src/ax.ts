@@ -129,12 +129,12 @@ export const SEARCH_PROMPT = `- Web search: await bu.search('the page you want, 
 export const AX_PROMPT = `
 
 Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw page/CDP above stays available for anything they cannot do.
-- Chain every action you already know into ONE javascript call, targeting controls by their visible name: await bu.fill('Email *', 'ada@example.com'); await bu.select('Country *', 'Canada'); await bu.check('I agree to the terms', true); await bu.upload('Choose File', 'cv.txt', 'CV of Ada'); await bu.click('Submit'). Each action waits for the page to settle (about 1 s at most, up to 3 s while a new page loads), prints one line, and throws if it fails, which stops the chain. After a cell that changed the page, the fresh visible page state is printed automatically.
+- Chain every action you already know into ONE javascript call, targeting controls by their visible name: await bu.fill('Email *', 'ada@example.com'); await bu.select('Country *', 'Canada'); await bu.check('I agree to the terms', true); await bu.upload('Choose File', 'cv.txt', 'CV of Ada'); await bu.click('Submit'). Actions use a short best-effort settle window, print input_sent or verified, and throw on detected failure. input_sent and settled cap/quiet are not proof the requested outcome completed. Check the resulting state; use waitForText for a known prerequisite and check its boolean before dependent actions. After a cell that changed the page, the fresh visible page state is printed automatically.
 - Actions: await bu.goto(url); await bu.click(t); await bu.fill(t, 'exact text', {enter:true}); await bu.select(t, 'Option label'); await bu.check(t, true); await bu.press('Enter'|'Tab'|'Escape'|'Space'|'ArrowDown'|'ArrowRight'…); await bu.click(t, {count: 2} or {button: 'right'}); await bu.hover(t); await bu.drag(t, target or {dx, dy}) for sliders, sortable lists and drop zones; await bu.upload(t, 'name.txt', 'content') writes that workspace file (omit content to use an existing one) and sets it on the file input.
   t = the control's accessible name or a unique prefix of it (nothing fuzzy), a numeric id from bu.state()/bu.find(), or {name, role}. Use ids only when names are ambiguous; they change after navigation. NOT_FOUND/AMBIGUOUS errors list candidates and nothing is executed.
 - Autocomplete fields: await bu.fill(t, 'Berl', {pick: 'Berlin, Germany'}) types, waits for suggestions and clicks that one. Always pass {pick} on autocomplete fields; never {enter:true} there.
 - If an interaction fails, try one different route (another control, ids from bu.find, the keyboard) before reporting that you are blocked.
-- JavaScript alert/confirm/prompt dialogs are accepted automatically; their text is printed as [dialog ...] after the action.
+- JavaScript alerts are acknowledged; confirm/prompt dialogs are dismissed unless you call bu.expectDialog(type, exactMessage, {accept:true, promptText?}) before the relevant action. Inspect the dialog text and stay within the user's authorization. The exact policy expires after that action.
 - Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids. Read: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows keyed by column headers.
 - Never write blind sleeps (setTimeout, sleep) to wait for pages; actions already settle. For a specific condition use await bu.waitForText('Results').
 - Result pages: if the page says it is loading, bu.waitForText the result, then read again before concluding.
@@ -164,6 +164,23 @@ export class AxHelpers {
   private lastNet = new Map<string, number>();
   private tracked = new Set<string>();
   private dialogs: string[] = [];
+  private actionSession: string | undefined;
+  private expectedDialog:
+    { type: string; message: string; accept: boolean; promptText?: string } | undefined;
+  /** Exact policy for a dialog expected during the next awaited action only. */
+  expectDialog(
+    type: 'alert' | 'confirm' | 'prompt',
+    message: string,
+    options: { accept: boolean; promptText?: string },
+  ) {
+    if (
+      !['alert', 'confirm', 'prompt'].includes(type) ||
+      typeof message !== 'string' ||
+      typeof options.accept !== 'boolean'
+    )
+      throw new Error('Expected dialog requires exact type/message and an accept boolean.');
+    this.expectedDialog = { type, message, ...options };
+  }
 
   /** Track in-flight requests per page session from CDP Network events (no page patching). */
   private async trackNetwork(page: Page) {
@@ -172,16 +189,21 @@ export class AxHelpers {
       const previous = cdp.observeEvent;
       cdp.observeEvent = (method, raw, session) => {
         previous?.(method, raw, session);
-        // An open alert/confirm blocks the page and every CDP call on it: accept it and report its text.
+        // Acknowledge alerts; dismiss decisions unless the caller expected this exact dialog.
         if (method === 'Page.javascriptDialogOpening') {
+          if (!this.actionSession || session !== this.actionSession) return;
           const d = raw as { type: string; message: string; defaultPrompt?: string };
+          const expected = this.expectedDialog;
+          this.expectedDialog = undefined;
+          const matched = expected?.type === d.type && expected.message === d.message;
+          const accept = matched ? expected.accept : d.type === 'alert';
           this.dialogs.push(
-            `[dialog ${d.type}] ${JSON.stringify(clip(d.message, 300))} (accepted)`,
+            `[dialog ${d.type}] ${JSON.stringify(clip(d.message, 300))} (${accept ? 'accepted' : 'dismissed'}${matched ? '; explicit policy' : '; no matching policy'})`,
           );
           void cdp
             .send(
               'Page.handleJavaScriptDialog',
-              { accept: true, promptText: d.defaultPrompt ?? '' },
+              { accept, promptText: matched ? (expected.promptText ?? '') : '' },
               session,
             )
             .catch(() => {});
@@ -564,9 +586,16 @@ export class AxHelpers {
         // Inside same-origin iframes, add each frame's content-box offset to get top-level viewport coordinates.
         let px = x, py = y;
         for (let w = e.ownerDocument.defaultView; w && w.frameElement; w = w.parent) {
-          const f = w.frameElement, fr = f.getBoundingClientRect(), cs = getComputedStyle(f);
+          const f = w.frameElement, fr = f.getBoundingClientRect(), cs = w.parent.getComputedStyle(f);
+          if (!f.checkVisibility({checkOpacity:true, checkVisibilityCSS:true})) throw Error('Frame hidden');
+          // Scaling/rotation needs quad mapping; reject rather than click the wrong point.
+          if (cs.transform !== 'none' || Math.abs(fr.width - f.offsetWidth) > 1 || Math.abs(fr.height - f.offsetHeight) > 1)
+            throw Error('Transformed frame: inspect its geometry with raw CDP');
           px += fr.x + f.clientLeft + parseFloat(cs.paddingLeft);
           py += fr.y + f.clientTop + parseFloat(cs.paddingTop);
+          if (px < 0 || py < 0 || px >= w.parent.innerWidth || py >= w.parent.innerHeight) throw Error('Frame target outside viewport');
+          const hit = f.getRootNode().elementFromPoint(px, py);
+          if (hit !== f) throw Error('Frame covered by ' + (hit?.tagName?.toLowerCase() ?? 'nothing'));
         }
         return {x: px, y: py, tag: e.tagName, type: e.type || '', editable: textField(e)};
       }`,
@@ -581,21 +610,23 @@ export class AxHelpers {
       id?: number | undefined;
       detail?: string | undefined;
       value?: T | undefined;
+      verify?: (() => Promise<void>) | undefined;
     }>,
   ) {
     if (this.busy) throw new Error('Await bu actions sequentially; no concurrent mutations.');
     this.busy = true;
     this.attempted = false;
     try {
-      await this.trackNetwork(this.page()).catch(() => {});
-      const { id, detail, value } = await body();
+      this.actionSession = await this.trackNetwork(this.page()).catch(() => undefined);
+      const { id, detail, value, verify } = await body();
       this.dirty = true;
       const settled = await this.settle();
+      await verify?.();
       const info = await this.page()
         .info()
         .catch(() => ({ url: '?', title: '?' }));
       this.log(
-        `[ok] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}${this.flushDialogs()}`,
+        `[${verify ? 'verified' : 'input_sent'}] ${op} ${typeof target === 'object' ? JSON.stringify(target) : JSON.stringify(target ?? '')}${id ? ` #${id}` : ''}${detail ? ` ${detail}` : ''} -> settled ${settled.why} ${settled.ms}ms | ${clip(info.title, 60)} | ${info.url}${this.flushDialogs()}`,
       );
       return {
         ok: true,
@@ -604,6 +635,7 @@ export class AxHelpers {
         url: info.url,
         title: info.title,
         settled,
+        outcomeVerified: !!verify,
         ...(value !== undefined ? { value } : {}),
       };
     } catch (error) {
@@ -614,6 +646,8 @@ export class AxHelpers {
       );
     } finally {
       this.busy = false;
+      this.expectedDialog = undefined;
+      this.actionSession = undefined;
     }
   }
 
@@ -829,6 +863,10 @@ export class AxHelpers {
               return a ? (a.isContentEditable ? a.innerText : (a.value ?? '')) : '';
             })
       ).catch(() => undefined);
+      if (!options.pick && actual !== text)
+        throw new Error(
+          'OUTCOME_NOT_VERIFIED: field did not retain the exact requested text. Inspect before continuing.',
+        );
       const picked = options.pick ? await this.pickOption(page, options.pick, text) : undefined;
       if (options.enter && !picked) await this.key(page, 'Enter');
       const mismatch = actual !== undefined && actual !== text && !options.enter;
@@ -887,7 +925,9 @@ export class AxHelpers {
         const picked = await this.pickOption(page, option);
         return { id: node.id, detail: `"${clip(node.name, 40)}" -> picked ${picked}` };
       }
-      const result = await this.onNode<string>(
+      await this.point(page, node.id);
+      this.attempted = true;
+      const result = await this.onNode<{ label: string; value: string }>(
         page,
         node.id,
         `function(label){
@@ -897,23 +937,46 @@ export class AxHelpers {
           if (hits.length !== 1) throw Error((hits.length ? 'AMBIGUOUS' : 'NOT_FOUND') + ': option ' + JSON.stringify(label) + '. Options: ' + JSON.stringify(opts.slice(0,40).map(o=>o.label)));
           this.value = hits[0].value; this.selectedIndex = hits[0].index;
           this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true}));
-          return hits[0].label;
+          return {label: hits[0].label, value: hits[0].value};
         }`,
         option,
       );
       this.attempted = true;
-      return { id: node.id, detail: `"${clip(node.name, 40)}" = ${JSON.stringify(result)}` };
+      return {
+        id: node.id,
+        detail: `"${clip(node.name, 40)}" = ${JSON.stringify(result.label)}`,
+        verify: async () => {
+          const actual = await this.onNode<string>(page, node.id, 'function(){return this.value;}');
+          if (actual !== result.value)
+            throw new Error('OUTCOME_NOT_VERIFIED: selection did not retain requested value.');
+        },
+      };
     });
   }
 
   async check(target: Target, on = true) {
+    if (typeof on !== 'boolean') throw new Error('check expects a boolean.');
     return this.act('check', target, async () => {
       const { page, node } = await this.resolve('check', target);
       if (node.checked === on) return { id: node.id, detail: `already ${on}` };
       const p = await this.point(page, node.id);
       this.attempted = true;
       await page.clickAt(p.x, p.y);
-      return { id: node.id, detail: `-> ${on}` };
+      return {
+        id: node.id,
+        detail: String(on),
+        verify: async () => {
+          const current = (await this.nodes(page)).nodes.find((n) => n.id === node.id);
+          if (current?.checked !== on)
+            throw new Error(
+              'OUTCOME_NOT_VERIFIED: expected checked=' +
+                on +
+                ', observed ' +
+                (current?.checked ?? 'unknown') +
+                '. Inspect before retrying.',
+            );
+        },
+      };
     });
   }
 
