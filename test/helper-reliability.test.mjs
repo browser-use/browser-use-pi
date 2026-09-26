@@ -40,7 +40,7 @@ before(async () => {
     model: 'openai/gpt-6-astra',
     mode: 'ultrafast',
     telemetry: false,
-    browser: { executablePath: '/dev/shm/pi-pr15-review-20260926/chromium', profileDir: profile },
+    browser: { executablePath: process.env.BROWSER_EXECUTABLE_PATH, profileDir: profile },
     workspace: profile + '/work',
     operationTimeoutMs: 3000,
     cellTimeoutMs: 10000,
