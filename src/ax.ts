@@ -137,7 +137,7 @@ Fast browser helpers: the global \`bu\` in the javascript REPL. Prefer them; raw
 - JavaScript alert/confirm/prompt dialogs are accepted automatically; their text is printed as [dialog ...] after the action.
 - Look: await bu.state() -> {url,title,controls:[{id,role,name,value}],text}; await bu.find('word') -> matching controls with ids. Read: await bu.read(region?) -> text lines (headings, [link](url), list items); await bu.table(i?) -> rows keyed by column headers.
 - Never write blind sleeps (setTimeout, sleep) to wait for pages; actions already settle. For a specific condition use await bu.waitForText('Results').
-- Result pages: if the page says it is loading, bu.waitForText the result, then read again before concluding.
+- Actions return as soon as the page is briefly quiet, often before slow results arrive; bu.state() waits up to 3 s for the page. If results are still missing or say loading, wait for them with await bu.waitForText('…') before concluding.
 - Deliver data you already extracted with finish_from_js({expression: 'rows'}) instead of retyping it. Take a screenshot only when the page's text did not give you what you need.
 `;
 
@@ -359,6 +359,7 @@ export class AxHelpers {
   /** Compact state: URL, title, interactive controls (ids usable as targets), visible text summary. */
   async state(options: { max?: number; text?: number } = {}) {
     this.dirty = false; // a look after the last action replaces the automatic state print
+    await this.settle({ capMs: 3000 }); // actions return early; what the model reads should be the settled page
     const [snap, visible] = await Promise.all([
       this.nodes(),
       this.visibleText().catch(() => undefined),
@@ -466,6 +467,17 @@ export class AxHelpers {
 
   /** Strict: numeric id, or a unique exact accessible name (optionally with role). Never guesses. */
   private async resolve(op: Op, target: Target) {
+    try {
+      return await this.resolveOnce(op, target);
+    } catch (error) {
+      // After a quick previous action the control may still be rendering: wait for the page once, then decide.
+      if (!String(error).includes('NOT_FOUND')) throw error;
+      await this.settle({ capMs: 1500 });
+      return this.resolveOnce(op, target);
+    }
+  }
+
+  private async resolveOnce(op: Op, target: Target) {
     const page = this.page();
     const snap = await this.nodes(page);
     const roles = ROLES[op];
@@ -955,7 +967,7 @@ export class AxHelpers {
 
   /** Wait for visible text (event-free polling of a real condition, not a blind sleep). */
   async waitForText(text: string, options: { timeoutMs?: number } = {}) {
-    const deadline = Date.now() + (options.timeoutMs ?? 3000);
+    const deadline = Date.now() + (options.timeoutMs ?? 8000);
     const want = norm(text);
     while (Date.now() < deadline) {
       try {
@@ -971,7 +983,7 @@ export class AxHelpers {
       }
       await delay(250);
     }
-    this.log(`[waitForText] "${text}" not visible after ${options.timeoutMs ?? 3000}ms`);
+    this.log(`[waitForText] "${text}" not visible after ${options.timeoutMs ?? 8000}ms`);
     return false;
   }
 
