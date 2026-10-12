@@ -60,6 +60,11 @@ test('Pi loop reads a real browser and returns schema-validated data with events
           `Workspace directory (JSON string): ${JSON.stringify(s.agent.workspace)}`,
         ),
       );
+      assert.ok(
+        getCurrentSystemPrompt(context.messages).includes(
+          `Today's date: ${new Date().toISOString().slice(0, 10)} (UTC).`,
+        ),
+      );
       const result = context.messages.findLast((m) => m.role === 'toolResult');
       assert.equal(result.isError, false);
       return call('finish', { result: { products: JSON.parse(result.content[0].text) } });
