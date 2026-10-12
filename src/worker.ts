@@ -115,10 +115,17 @@ if (config.webSearch) {
   process.env.V4_RUN_TOKEN = config.webSearch.token;
 }
 const webSearch = config.webSearch;
+// One task once spent 229 searches; past the cap the model works from the pages it already found.
+const SEARCH_CAP = 25;
+let searches = 0;
 /** One POST to the host's search endpoint; the body is read once, so a failure can quote it. */
 async function search(query: string, options: { num_results?: number; category?: string } = {}) {
   if (!webSearch) throw new Error('Web search is not enabled.');
   if (typeof query !== 'string' || !query.trim()) throw new Error('search(query) needs text.');
+  if (++searches > SEARCH_CAP)
+    throw new Error(
+      `Search limit: ${SEARCH_CAP} searches per task. Work from the pages you found.`,
+    );
   const { num_results, category } = options;
   // Under the 30 s cell deadline, so a hung endpoint fails the call instead of killing the worker.
   const response = await fetch(webSearch.url, {

@@ -61,3 +61,11 @@ test('search() posts to the configured endpoint and returns hits as an array, []
   assert.deepEqual(JSON.parse(empty.text), { query: 'nothing', count: 0, results: [] });
   await assert.rejects(agent.execute("await search('over budget')"), /HTTP 402.*out of budget/);
 });
+
+test('search() stops at 25 calls per task with a message, without calling the endpoint', async () => {
+  const result = await agent.execute(
+    "let searchError; for (let i = 0; i < 30 && !searchError; i++) await search('cap ' + i).catch((e) => (searchError = e.message)); searchError",
+  );
+  assert.match(result.text, /Search limit: 25 searches per task/);
+  assert.equal(requests.length, 25);
+});
