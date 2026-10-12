@@ -764,7 +764,7 @@ export class AxHelpers {
     const loading = settled.pending ? ` | loading: ${settled.pending}` : '';
     const dialogs = this.flushDialogs();
     const header = `[state] ${title}${loading}${line2}${dialogs}`;
-    const max = options.max ?? (geo ? 6000 : 3000);
+    const max = options.max ?? (geo ? (this.#ax.cap ?? 6000) : 3000);
     // v2: no line takes more than half the print. A longer one (a text file is one line) was cut whole.
     if (geo) lines = lines.map((line) => clip(line, max / 2));
     const fit = (from: string[], budget: number) => {

@@ -958,6 +958,20 @@ test('small: a frame or page of at most that many screens prints whole, a longer
   }
 });
 
+test('cap: the print holds at most that many chars, and a page of any length prints whole with a large small', async () => {
+  const whole = await create({ state: 'v2', small: 99, cap: 3000 });
+  try {
+    const state = await open(whole, '/long');
+    assert.match(line2(state), /\| 0 controls above \| 0 below$/);
+    const [marker] = state.match(/^\.\.\. \d+ on-screen lines cut at 3000 chars: .*$/m);
+    assert.ok(state.trim().split('\n').slice(2, -1).join('\n').length <= 3000 + marker.length);
+    assert.equal(printed(state)[0], 'Item 0');
+    assert.ok(printed(state).length > (await onScreen(whole)).length);
+  } finally {
+    await whole.close();
+  }
+});
+
 test('line 1 keeps the loading count and the dialog line follows line 2', async () => {
   // Last: the page keeps requests open, which holds each look for its 3 s cap.
   const state = await open(v2, '/alert');
