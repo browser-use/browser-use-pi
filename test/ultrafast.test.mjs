@@ -46,3 +46,13 @@ test('the upload recipe prints only with a file line, and running it sets the by
     "'cv.txt:text'",
   );
 });
+
+test('bu follows the tab the code last used, and returns to page when that tab closes', async () => {
+  await agent.execute(`await page.goto(${JSON.stringify(fixture.url)})`);
+  await agent.execute(
+    "const second = await tabs.open('data:text/html,<title>Second tab</title><button>Two</button>')",
+  );
+  assert.match((await agent.execute('await bu.state()')).text, /^\[state\] Second tab \|/m);
+  await agent.execute('await second.close(); await page.info()');
+  assert.match((await agent.execute('await bu.state()')).text, /^\[state\] Orbital Supply/m);
+});

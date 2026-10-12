@@ -202,6 +202,8 @@ export class Page {
 
 /** Tab ownership stays explicit. Attached caller tabs are never included in cleanup. */
 export class Tabs {
+  /** Every page handed out, by target id. */
+  readonly pages = new Map<string, Page>();
   constructor(
     readonly cdp: CDP,
     private own: (id: string) => void,
@@ -212,11 +214,13 @@ export class Tabs {
   async open(url = 'about:blank') {
     const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank' });
     this.own(targetId);
-    const page = await Page.attach(this.cdp, targetId);
+    const page = await this.get(targetId);
     if (url !== 'about:blank') await page.goto(url);
     return page;
   }
   async get(id: string) {
-    return Page.attach(this.cdp, id);
+    const page = await Page.attach(this.cdp, id);
+    this.pages.set(id, page);
+    return page;
   }
 }
