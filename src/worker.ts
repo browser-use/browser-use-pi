@@ -104,7 +104,9 @@ if (executionContextId === undefined)
 const bu =
   config.mode === 'ultrafast'
     ? new AxHelpers(
-        () => Reflect.get(realm, 'page') as Page,
+        // The tab the code last sent a command to (`const page = await tabs.open(url)` leaves the global on the first tab).
+        () =>
+          tabs.pages.get(browser.observationTargetId ?? '') ?? (Reflect.get(realm, 'page') as Page),
         () => browser,
         (text) => (Reflect.get(realm, 'console') as Console).log(text),
       )
@@ -432,7 +434,7 @@ process.on('message', async (message: WorkerRequest) => {
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
   } finally {
-    // Before bu.state(), which reads the primary page, not necessarily the tab the code used.
+    // Before bu.state(), whose own commands also count as activity.
     activeTargetId = browser.observationTargetId;
     // After a cell whose bu actions reached the page, show the resulting state without another model turn.
     if (bu?.acted)
