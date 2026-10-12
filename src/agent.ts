@@ -15,7 +15,7 @@ import { researchTools } from './research-tools.js';
 import type { BrowserUseOptions, RunOptions, RunResult, StopReason } from './types.js';
 import { redact } from './history.js';
 import { SEARCH_PROMPT, SYSTEM_PROMPT } from './prompt.js';
-import { AX_PROMPT } from './ax.js';
+import { axPrompt } from './ax.js';
 import { positiveInteger } from './protocol.js';
 import { bounded, type RunControl } from './control.js';
 
@@ -122,6 +122,7 @@ export async function runAgent(
   let stopped: StopReason | undefined;
   const codeParameters = Type.Object({ code: Type.String({ minLength: 1 }) });
   const cellFailures = new Map<string, CellError>();
+  let compacted = 0; // ax.diff: the compactions the last cell knew of
   const javascript: AgentTool<typeof codeParameters> = {
     name: 'javascript',
     label: 'Browser JavaScript',
@@ -131,8 +132,16 @@ export async function runAgent(
     replay: 'never',
     execute: async (_id, params: { code: string }, signal) => {
       let result;
+      // ax.diff: a compaction may have dropped the last full state, and a diff needs it. Print in full once.
+      const fullState = !!config.ax?.diff && context.compactions > compacted;
+      compacted = context.compactions;
       try {
-        result = await runtime.execute(params.code, config.cellTimeoutMs ?? 30_000, signal);
+        result = await runtime.execute(
+          params.code,
+          config.cellTimeoutMs ?? 30_000,
+          signal,
+          fullState,
+        );
       } catch (error) {
         if (!(error instanceof CellError)) throw error;
         // Pi converts thrown tools to text-only errors. Restore their native evidence
@@ -248,7 +257,7 @@ export async function runAgent(
     initialState: {
       model,
       messages: session?.messages ?? [],
-      systemPrompt: `${SYSTEM_PROMPT}${config.mode === 'ultrafast' ? AX_PROMPT : ''}${config.webSearch ? SEARCH_PROMPT : ''}\nWorkspace directory (JSON string): ${JSON.stringify(workspace)}. Relative file-tool paths and the JavaScript working directory start here. Save deliverables inside this directory; files outside it are not included by BrowserUse.files(). Use relative paths or the exact workspace value, not a guessed parent directory.\n${journalGuidance}${config.sensitiveData ? `Named secrets (values withheld): ${JSON.stringify(Object.fromEntries(Object.entries(config.sensitiveData).map(([name, entry]) => [name, entry.domains])))}. Use await fillSecret(name, backendNodeId, page) on an input found in the AX tree. Never read back, print or save credentials.\n` : ''}${config.instructions ?? ''}`,
+      systemPrompt: `${SYSTEM_PROMPT}${config.mode === 'ultrafast' ? axPrompt(config.ax) : ''}${config.webSearch ? SEARCH_PROMPT : ''}\nWorkspace directory (JSON string): ${JSON.stringify(workspace)}. Relative file-tool paths and the JavaScript working directory start here. Save deliverables inside this directory; files outside it are not included by BrowserUse.files(). Use relative paths or the exact workspace value, not a guessed parent directory.\n${journalGuidance}${config.sensitiveData ? `Named secrets (values withheld): ${JSON.stringify(Object.fromEntries(Object.entries(config.sensitiveData).map(([name, entry]) => [name, entry.domains])))}. Use await fillSecret(name, backendNodeId, page) on an input found in the AX tree. Never read back, print or save credentials.\n` : ''}${config.instructions ?? ''}`,
       thinkingLevel: config.reasoning ?? 'medium',
       tools: [
         javascript,

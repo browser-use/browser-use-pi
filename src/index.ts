@@ -100,6 +100,10 @@ export class BrowserUse {
       throw new Error('shellEnv must map names to strings.');
     if (options.mode !== undefined && options.mode !== 'default' && options.mode !== 'ultrafast')
       throw new Error("mode must be 'default' or 'ultrafast'.");
+    if (options.ax?.state !== undefined && options.ax.state !== 'v1' && options.ax.state !== 'v2')
+      throw new Error("ax.state must be 'v1' or 'v2'.");
+    if (options.ax?.diff && options.ax.state !== 'v2')
+      throw new Error("ax.diff needs ax.state 'v2'.");
     if (
       options.webSearch !== undefined &&
       (typeof options.webSearch?.url !== 'string' || typeof options.webSearch?.token !== 'string')
@@ -164,6 +168,7 @@ export class BrowserUse {
     const runtime = new BrowserRuntime(
       {
         mode: options.mode ?? 'default',
+        ...(options.ax ? { ax: options.ax } : {}),
         ...(options.webSearch ? { webSearch: options.webSearch } : {}),
         endpoint: browser.endpoint,
         ...(options.browser?.kind === 'pending'

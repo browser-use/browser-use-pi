@@ -107,6 +107,7 @@ const bu =
         () => Reflect.get(realm, 'page') as Page,
         () => browser,
         (text) => (Reflect.get(realm, 'console') as Console).log(text),
+        config.ax,
       )
     : undefined;
 // The search endpoint under the cloud worker's names; transcripts restored from before search() used them.
@@ -333,6 +334,21 @@ function observe() {
           action: { kind: method === 'Page.navigate' ? 'Navigate' : 'Type', targetId },
         });
     };
+  // ax.rawInput: every command passes here, so raw input (page.cdp, page.clickAt, browser.send) counts as an
+  // action: the cell ends with the page wait, the verdict line and the state print, as after bu.click.
+  if (bu && config.ax?.rawInput) {
+    const record = browser.observeCommand;
+    browser.observeCommand = (method, raw, sessionId) => {
+      // Every Input command but its three settings (setIgnoreInputEvents, setInterceptDrags, cancelDragging).
+      if (/^Input\.(?!set|cancel)/.test(method)) {
+        bu.acted = true;
+        bu.actedAt = Date.now();
+        // A scroll changes no page: its verdict is the scroll position in the state.
+        if (!/wheel|scroll/i.test(`${method} ${(raw as { type?: string }).type}`)) bu.raw = true;
+      }
+      record?.(method, raw, sessionId);
+    };
+  }
 }
 observe();
 realm.console = new (await import('node:console')).Console(sink, sink);
@@ -424,6 +440,7 @@ process.on('message', async (message: WorkerRequest) => {
   browser.observeResponse = captureResponse;
   overflow = false;
   outputFile = message.outputFile;
+  if (bu && message.fullState) bu.full = true; // ax.diff: the model may have lost the last full state
   let valueJson: string | undefined;
   let failure: string | undefined;
   let activeTargetId: string | undefined;
@@ -435,9 +452,11 @@ process.on('message', async (message: WorkerRequest) => {
     // Before bu.state(), which reads the primary page, not necessarily the tab the code used.
     activeTargetId = browser.observationTargetId;
     // After a cell whose bu actions reached the page, show the resulting state without another model turn.
-    if (bu?.acted)
+    // ax.autoState false: no state, but raw input still gets its page wait and verdict line.
+    const auto = config.ax?.autoState !== false;
+    if (bu?.acted && (auto || bu.raw))
       await bu
-        .state()
+        .state(auto ? {} : { verdict: true })
         .catch((error: unknown) => sink.write(`[state unavailable: ${String(error)}]\n`));
     active = false;
     browser.observeResponse = undefined;

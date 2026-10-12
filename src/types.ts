@@ -16,6 +16,8 @@ import type { BrowserOptions } from './browser.js';
 export interface BrowserUseOptions extends DomainOptions {
   /** 'ultrafast' adds the `bu` helpers (page state and actions by accessibility-tree id, short page-settle waits) to the REPL. */
   mode?: 'default' | 'ultrafast';
+  /** Ultrafast experiments, e.g. {state: 'v2', rawInput: true}. All off by default. */
+  ax?: import('./protocol.js').AxOptions;
   /**
    * A search endpoint with Browser Use Cloud's /api/v4/search contract; the prompt teaches the model to fetch it.
    * The model's code can read the token (as the cloud agent's shell can), so pass a run-scoped one.

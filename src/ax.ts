@@ -2,6 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { Protocol } from 'devtools-protocol';
 import type { Page } from './page.js';
 import type { CDP } from './cdp.js';
+import type { AxOptions } from './protocol.js';
 
 type AX = Protocol.Accessibility.AXNode;
 const CONTROLS = new Set(
@@ -28,6 +29,205 @@ const printed = (line: string) =>
     value: () => '',
   });
 
+type Rect = { x: number; y: number; w: number; h: number };
+/**
+ * v2. A scroll area: its client box in viewport px, the controls it hides, and its scroll position, visible
+ * height and full height in its own px (zoom and scale make the two differ). The page is the outermost one.
+ */
+type Area = Rect & {
+  id: number;
+  left: number;
+  top: number;
+  shown: number;
+  height: number;
+  above: number;
+  below: number;
+  name?: string;
+  in?: Area;
+  off: Off | null;
+};
+/** v2. The scroll area that hides a box, and on which side. */
+type Off = { by: Area; above: boolean };
+const view = (a: Area) =>
+  `${Math.round(a.top)}-${Math.round(a.top + a.shown)} of ${Math.round(a.height)} px`;
+/** v2. One call gives every box. overflow-y finds the scroll areas, position what a node hangs on. */
+const SNAPSHOT = { computedStyles: ['overflow-y', 'position'], includeDOMRects: true };
+
+/**
+ * v2. Null when a box shows through every scroll area around it and the screen; else what hides it.
+ * Only up and down: what is left or right of an area prints as today, so a carousel loses nothing.
+ */
+function offBy(box: Rect, inside: Area): Off | null {
+  if (inside.off) return inside.off; // an area that is off screen hides its content the same way
+  let { y, h } = box;
+  for (let a: Area | undefined = inside; a; a = a.in) {
+    if (y + h <= a.y) return { by: a, above: true };
+    if (y >= a.y + a.h) return { by: a, above: false };
+    // Only the part inside this area can show further out.
+    h = Math.min(y + h, a.y + a.h) - Math.max(y, a.y);
+    y = Math.max(y, a.y);
+  }
+  return null;
+}
+
+/**
+ * v2. The box of every laid-out node in viewport px, with its nearest scroll area, from one DOMSnapshot.
+ * Its bounds are document px and already include the scroll of inner areas, fixed and sticky offsets.
+ */
+function layout(snap: Protocol.DOMSnapshot.CaptureSnapshotResponse) {
+  const boxes = new Map<number, Rect & { in: Area }>();
+  const areas = new Map<number | string, Area>(); // by backendNodeId; a frame's own scroll by its frame id
+  type Scroll = (number | undefined)[]; // [scrollLeft, scrollTop, , scrollHeight]
+  const area = (id: number, box: Rect, scroll: Scroll, shown: number, within?: Area): Area => ({
+    ...box,
+    id,
+    left: scroll[0] ?? 0,
+    top: scroll[1] ?? 0,
+    shown,
+    height: scroll[3] ?? 0,
+    above: 0,
+    below: 0,
+    ...(within ? { in: within } : {}),
+    off: within ? offBy(box, within) : null,
+  });
+  // Per document: what to add to its bounds, and the area its nodes are in.
+  const docs: { x: number; y: number; area: Area }[] = [];
+  snap.documents.forEach((d, di) => {
+    const row = new Map(d.layout.nodeIndex.map((n, i) => [n, i]));
+    const scroll = (f: typeof d) => [f.scrollOffsetX, f.scrollOffsetY, 0, f.contentHeight];
+    if (!di) {
+      // The main document node's box is the viewport.
+      const [, , w = 0, h = 0] = d.layout.bounds[row.get(0) ?? -1] ?? [];
+      const screen = area(0, { x: 0, y: 0, w, h }, scroll(d), h);
+      docs[0] = { x: -screen.left, y: -screen.top, area: screen };
+    }
+    const doc = docs[di];
+    if (!doc) return; // its iframe has no box
+    const frames = d.nodes.contentDocumentIndex;
+    const within: Area[] = []; // per node: its nearest scroll area
+    const own: Area[] = []; // per node: the scroll area it is
+    const based: Area[] = []; // per node: the scroll area its absolute children are in
+    const parked: boolean[] = []; // per node: it or an ancestor is parked, see below
+    let root = 'visible';
+    d.nodes.parentIndex?.forEach((parent, n) => {
+      const i = row.get(n) ?? -1;
+      const [overflow = '', position = ''] = (d.layout.styles[i] ?? []).map((s) => snap.strings[s]);
+      // A fixed node hangs on the screen and an absolute one on its nearest positioned ancestor: a menu or a
+      // dialog declared inside a list is not clipped by that list.
+      const inside = (within[n] =
+        position === 'fixed'
+          ? doc.area
+          : position === 'absolute'
+            ? (based[parent] ?? doc.area)
+            : (own[parent] ?? within[parent] ?? doc.area));
+      const positioned = /absolute|fixed|relative|sticky/.test(position);
+      based[n] = positioned ? inside : (based[parent] ?? doc.area);
+      const id = d.nodes.backendNodeId?.[n];
+      const [bx = 0, by = 0, w = 0, h = 0] = d.layout.bounds[i] ?? [];
+      const box = { x: bx + doc.x, y: by + doc.y, w, h };
+      // Parked: positioned above or left of where its area starts, so no scroll brings it back (skip links,
+      // the real input of a styled radio). It and what is in it have no box here: the parent decides.
+      parked[n] =
+        parked[parent] ||
+        (/absolute|fixed/.test(position) &&
+          (box.y + h <= inside.y - inside.top || box.x + w <= inside.x - inside.left));
+      if (!id || !(w > 0 && h > 0) || parked[n]) return;
+      boxes.set(id, { ...box, in: inside });
+      const [cx, cy = 0, cw = 0, ch = 0] = d.layout.clientRects?.[i] ?? [];
+      if (cx === undefined) return; // text
+      // Bounds are screen px. The offset, client and scroll rects are the node's own px: scale them.
+      const [, , ow = 0, oh = 0] = d.layout.offsetRects?.[i] ?? [];
+      const [sx, sy] = [ow ? w / ow : 1, oh ? h / oh : 1];
+      const client = { x: box.x + cx * sx, y: box.y + cy * sy, w: cw * sx, h: ch * sy };
+      const scrolls = d.layout.scrollRects?.[i] ?? [];
+      const child = frames?.value[frames.index.indexOf(n)];
+      const frame = snap.documents[child ?? -1];
+      if (child !== undefined && frame) {
+        // An iframe: its document starts at the client box and scrolls by itself.
+        const framed = area(id, client, scroll(frame), ch, inside);
+        areas.set(snap.strings[frame.frameId] ?? '', framed);
+        docs[child] = { x: client.x - framed.left, y: client.y - framed.top, area: framed };
+      } else if (parent === 0) {
+        root = overflow; // <html> scrolls the viewport, and so does <body> while <html> is visible
+      } else if (
+        /auto|scroll|overlay/.test(overflow) &&
+        (scrolls[3] ?? 0) > ch + 1 &&
+        !(root === 'visible' && /^body$/i.test(snap.strings[d.nodes.nodeName?.[n] ?? -1] ?? ''))
+      ) {
+        own[n] = area(id, client, scrolls, ch, inside);
+        areas.set(id, own[n]);
+        if (positioned) based[n] = own[n];
+      }
+    });
+  });
+  return { page: docs[0]!.area, boxes, areas };
+}
+
+/** ax.diff. What the last look showed: its page key, line 1 after the tag, line 2 and the lines after the cap. */
+type Shown = { key: string; page: string; view: string; lines: string[] };
+/** ax.diff. A diff is printed when it is at most this share of the full print and has at most this many ~ and + lines. */
+const DIFF_RATIO = 0.5;
+const DIFF_LINES = 40;
+const SAME = '[state same]\nnothing changed on screen since the last state';
+
+/**
+ * ax.diff. What tells `now` from `was`: the ids that left, and in page order ~ for an id line that changed and
+ * + for a new line, with "@ after [id]" before each run of + lines. Text that left is not listed.
+ */
+function changes(was: string[], now: string[]) {
+  // An id line is known by "[12]", a scroll area line by "[12] scroll area": a scroller that is a control prints both.
+  const key = (line: string) => /^\[(\d+)\]( scroll area)?/.exec(line);
+  const old = new Map<string, string>(); // the id lines of the last print
+  const left = new Set<number>(); // its ids that this print does not have
+  for (const line of was) {
+    const m = key(line);
+    if (!m) continue;
+    old.set(m[0], line);
+    left.add(Number(m[1]));
+  }
+  // A text line has no id. It is the same line when it reads the same under the same id line, the nearest one
+  // above it that both prints have. So a text that a new row repeats is new, and one pushed down by new rows is not.
+  const kept = new Set(now.map((line) => key(line)?.[0]).filter((k) => k && old.has(k)));
+  const placed = (all: string[]) => {
+    let above = '';
+    return all.map((line) => {
+      const k = key(line)?.[0];
+      if (kept.has(k)) above = k!;
+      return k ? '' : `${above}\n${line}`;
+    });
+  };
+  const texts = new Map<string, number>(); // the text lines of the last print by place, counted
+  for (const text of placed(was)) if (text) texts.set(text, (texts.get(text) ?? 0) + 1);
+  const places = placed(now);
+  const lines: string[] = [];
+  const shown: number[] = [];
+  let anchor = ''; // the id line above
+  let added = false; // inside a run of new lines
+  now.forEach((line, i) => {
+    const m = key(line);
+    const text = places[i]!;
+    const known = m ? old.get(m[0]) : texts.get(text) ? line : undefined;
+    if (!m && known) texts.set(text, texts.get(text)! - 1);
+    if (known === undefined && !added && anchor) lines.push(`@ after ${anchor}`);
+    if (known !== line) lines.push(`${known === undefined ? '+' : '~'}${line}`);
+    // A run of new lines ends at an id line that was there before, not at a text line that stayed.
+    if (m || known === undefined) added = known === undefined;
+    if (!m) return;
+    anchor = `[${m[1]}]`;
+    left.delete(Number(m[1]));
+    shown.push(Number(m[1]));
+  });
+  // "a-b" stands for every id shown before from a to b, so a range ends at an id that is still shown.
+  const ranges: number[][] = [];
+  let open = false;
+  for (const n of [...left, ...shown].sort((a, b) => a - b)) {
+    if (open && left.has(n)) ranges.at(-1)![1] = n;
+    else if (left.has(n)) ranges.push([n, n]);
+    open = left.has(n);
+  }
+  return { gone: ranges.map(([a, b]) => (a === b ? a : `${a}-${b}`)).join(', '), lines };
+}
+
 /** Appended to the system prompt in ultrafast mode. */
 export const AX_PROMPT = `
 
@@ -41,14 +241,76 @@ Ultrafast: the global \`bu\` in the javascript REPL. Each model call costs ~1 s,
 - alert/confirm/prompt/beforeunload dialogs are accepted automatically; their text is printed as [dialog ...].
 `;
 
+/** AX_PROMPT with the sentences that the ax switches change. With no switch it is AX_PROMPT. */
+export function axPrompt(ax: AxOptions = {}) {
+  let prompt = AX_PROMPT;
+  const edit = (from: string, to: string) => (prompt = prompt.replace(from, to));
+  if (ax.state === 'v2')
+    edit(
+      'prints the page in order and returns that text:',
+      'prints what is on screen in order and returns that text: line 2 is the scroll position (view 0-813 of 9480 px | 0 controls above | 141 below), then',
+    );
+  if (ax.state === 'v2')
+    edit(
+      'in every CDP DOM command.',
+      'in every CDP DOM command. Ids of an earlier page are stale: bu.click and bu.type refuse them; use the ids of the newest state.',
+    );
+  if (ax.diff)
+    edit(
+      '; * marks ids new since the last look.',
+      '. A later look at the same page may print only [state diff]: ~ a changed line, + a new line (@ after [id]: where it sits), gone: ids that left the screen; or [state same]. bu.state({full: true}) reprints all.',
+    );
+  if (ax.autoState === false)
+    edit(
+      ' After a javascript call whose bu actions reached the page, the state is printed automatically.',
+      ' The state is not printed after an action: look when you need it.',
+    );
+  else if (ax.rawInput)
+    edit('whose bu actions reached', 'whose bu actions or raw Input commands reached');
+  if (ax.scroll)
+    edit(
+      "; don't click it first.",
+      `; don't click it first. await bu.scroll('down') or 'up' moves one screen; {pages: 0.5} less${ax.state === 'v2' ? ', {at: id} inside a "scroll area" line' : ''}.`,
+    );
+  else if (ax.state === 'v2')
+    edit(
+      'mouseMoved, mouseReleased.',
+      `mouseMoved, mouseReleased; scroll with await page.cdp('Input.dispatchMouseEvent', {type: 'mouseWheel', x: 700, y: 400, deltaX: 0, deltaY: 800}): deltaY is px down, negative up; x, y on screen, or inside a "scroll area" line's box (DOM.getBoxModel) to scroll that list.`,
+    );
+  return prompt;
+}
+
 /** State print and id-based actions on Chrome's accessibility tree. Raw page/CDP stays available. */
 export class AxHelpers {
   constructor(
     private page: () => Page,
     private browser: () => CDP,
     private log: (text: string) => void,
-  ) {}
+    ax: AxOptions = {},
+  ) {
+    this.#ax = ax;
+    if (ax.scroll) this.scroll = (to, options) => this.#scroll(to, options);
+  }
 
+  /** The ax switches. #private, as all v2 state: the model's code sees `bu`, and with no switch it is today's object. */
+  #ax: AxOptions;
+  /** Only with ax.scroll. */
+  declare scroll?: (
+    to: 'down' | 'up',
+    options?: { pages?: number; at?: number },
+  ) => Promise<String>;
+  /** ax.rawInput: set by the worker on a raw Input command. The next look prints its verdict line. */
+  declare raw?: boolean;
+  /** ax.diff: set by the worker when the agent compacted its history. The next look prints in full. */
+  declare full?: boolean;
+  /** ax.rawInput: the probe of the last look. */
+  #seen: Awaited<ReturnType<AxHelpers['probe']>> | undefined;
+  /**
+   * v2: every id a look has printed, with the page it was last printed on (main frame id:loaderId) and its role
+   * and name there, so that a stale message can name the element. Nothing else is kept of an earlier page.
+   */
+  #ids = new Map<number, { role: string; name: string; key: string }>();
+  #shown: Shown | undefined;
   private inflight = new Map<string, Map<string, number>>();
   private lastNet = new Map<string, number>();
   private tracked = new Set<string>();
@@ -57,8 +319,8 @@ export class AxHelpers {
   private last = new Map<number, { role: string; name: string }>();
   /** Set by every action; the worker prints the state after that cell. */
   acted = false;
-  /** When the last action's settle began, 0 after a failed action. */
-  private actedAt = 0;
+  /** When the last action's settle began, 0 after a failed action. With ax.rawInput the worker sets both on raw input. */
+  actedAt = 0;
 
   /** Track in-flight requests per page session from CDP Network events (no page patching). */
   private async trackNetwork(page: Page) {
@@ -115,7 +377,8 @@ export class AxHelpers {
 
   /** URL, title, document identity, a counter of DOM mutations (style aside) and form input/change events. */
   private probe(page: Page) {
-    return page.evaluate(() => {
+    const scroll = this.#ax.state === 'v2' || !!this.#ax.scroll;
+    return page.evaluate((scroll) => {
       const w = window as unknown as {
         __buObs?: MutationObserver;
         __buLast: number;
@@ -164,6 +427,18 @@ export class AxHelpers {
           characterData: true,
         });
         for (const type of ['input', 'change']) addEventListener(type, () => w.__buN++, true);
+        // v2: a wheel event scrolls after its command returns, so the page is not quiet while something scrolls.
+        // Per scroller a run of scroll events counts for 1.5 s: a ticker that never stops is not the page reacting.
+        const runs = new WeakMap<object, { start: number; last: number }>();
+        const scrolled = ({ target }: Event) => {
+          const now = performance.now();
+          const run = runs.get(target!) ?? { start: now, last: now };
+          if (now - run.last > 200) run.start = now;
+          run.last = now;
+          runs.set(target!, run);
+          if (now - run.start < 1500) w.__buLast = now;
+        };
+        if (scroll) addEventListener('scroll', scrolled, true);
       }
       return {
         idle: performance.now() - w.__buLast,
@@ -174,7 +449,7 @@ export class AxHelpers {
         doc: w.__buDoc,
         files: !!document.querySelector('input[type=file]'),
       };
-    });
+    }, scroll);
   }
 
   /**
@@ -260,9 +535,10 @@ export class AxHelpers {
   private async capture(page: Page) {
     for (let i = 0; ; i++) {
       try {
-        const [{ nodes }, { frameTree }] = await Promise.all([
+        const [{ nodes }, { frameTree }, snap] = await Promise.all([
           page.cdp('Accessibility.getFullAXTree'),
           page.cdp('Page.getFrameTree'),
+          this.#ax.state === 'v2' ? page.cdp('DOMSnapshot.captureSnapshot', SNAPSHOT) : undefined,
         ]);
         const children: { url: string; id: string }[] = [];
         const walk = (tree: typeof frameTree) =>
@@ -274,12 +550,13 @@ export class AxHelpers {
         const frames = await Promise.all(
           children.map(({ url, id }) =>
             page.cdp('Accessibility.getFullAXTree', { frameId: id }).then(
-              (r) => ({ url, nodes: r.nodes }),
-              () => ({ url, nodes: [] as AX[] }),
+              (r) => ({ url, id, nodes: r.nodes }),
+              () => ({ url, id, nodes: [] as AX[] }),
             ),
           ),
         );
-        return [{ url: '', nodes }, ...frames];
+        const key = `${frameTree.frame.id}:${frameTree.frame.loaderId}`;
+        return { frames: [{ url: '', id: '', nodes }, ...frames], snap, key };
       } catch (error) {
         if (i >= 20 || !isContextLoss(error)) throw error;
         await delay(50);
@@ -287,15 +564,23 @@ export class AxHelpers {
     }
   }
 
-  /** The page as one list in page order. */
-  async state(options: { max?: number } = {}) {
+  /** The page as one list in page order. ax.diff: {full: true} prints all of it. {verdict: true} is the worker's. */
+  async state(options: { max?: number; full?: boolean; verdict?: boolean } = {}) {
     const page = this.page();
     // A look right after an action continues that action's quiet window instead of starting a new one.
     const since = this.acted ? this.actedAt : 0;
     this.acted = false; // a look after the last action replaces the automatic print
     const settled = await this.settle({ capMs: 3000, since });
+    // ax.rawInput: raw input gets the verdict line of a helper, against the page as the last look left it.
+    if (this.#ax.rawInput) {
+      const now = settled.probe ?? (await this.probe(page).catch(() => undefined));
+      if (this.raw) this.log(`[ok] raw input -> ${await this.change(this.#seen, now)}`);
+      this.raw = false;
+      this.#seen = now;
+    }
+    if (options.verdict) return; // ax.autoState false: raw input still gets the wait and its verdict line
     // The settle probe already has URL and title, and says whether a file input needs looking up.
-    const [frames, info, visible, files] = await Promise.all([
+    const [{ frames, snap, key }, info, visible, files] = await Promise.all([
       this.capture(page),
       settled.probe ?? page.info(),
       this.visibleText(page).catch(() => undefined),
@@ -303,25 +588,70 @@ export class AxHelpers {
     ]);
     const previous = this.last;
     this.last = new Map();
-    const lines: string[] = [];
+    let lines: string[] = [];
     const text: string[] = [];
     const flush = () => text.length && lines.push(text.splice(0).join(' '));
+    // v2 prints only what is on screen: geo has every box, and what is off screen is counted per scroll area.
+    const geo = snap && layout(snap);
+    const announced = new Map<string, Area>();
+    const announce = (area: Area, name: string) => {
+      // Stands in for the area's line until the walk has counted what it hides. No line starts with a space.
+      const mark = ` ${announced.size}`;
+      announced.set(mark, Object.assign(area, { name }));
+      if (!this.last.has(area.id)) this.last.set(area.id, { role: 'scroll area', name });
+      return mark;
+    };
+    let textEnd = 0;
+    let block = 0; // v2: how deep the walk is inside BLOCKS, where text stays one line
+    let modal = false;
     for (const frame of frames) {
       const byId = new Map(frame.nodes.map((n) => [n.nodeId, n]));
       const start = lines.length;
-      const walk = (n: AX | undefined, inside: string) => {
+      // v2: null when n or something inside it is on screen, undefined when nothing in it has a box.
+      const seen = new Map<AX, Off | null | undefined>();
+      const offOf = (n: AX): Off | null | undefined => {
+        if (seen.has(n)) return seen.get(n);
+        const box = geo!.boxes.get(n.backendDOMNodeId ?? 0);
+        let off = box && offBy(box, box.in);
+        for (const c of n.childIds ?? []) {
+          if (off === null) break; // ancestors of something on screen are kept
+          const kid = byId.get(c);
+          const k = kid && offOf(kid);
+          off = k === null ? null : (off ?? k);
+        }
+        seen.set(n, off);
+        return off;
+      };
+      const walk = (n: AX | undefined, inside: string, up: Off | null = null) => {
         if (!n) return;
         const role = String(n.role?.value ?? '');
         const name = norm(n.name?.value);
-        const kids = () => n.childIds?.forEach((c) => walk(byId.get(c), inside));
+        // v2: what hides n, null when it is on screen. A node without a box goes with its parent.
+        const mine = geo ? offOf(n) : null;
+        const off = mine === undefined ? up : mine;
+        const kids = () => n.childIds?.forEach((c) => walk(byId.get(c), inside, off));
+        const area = !off && geo?.areas.get(n.backendDOMNodeId ?? 0);
+        if (area && !area.off) {
+          flush();
+          lines.push(announce(area, name));
+        }
         if (n.ignored) return kids();
+        // v2: a closed drawer keeps aria-modal while it is parked off screen. Only a dialog with a box on screen counts.
+        if (/dialog$/.test(role) && prop(n, 'modal') && mine === null) modal = true;
         if (role === 'StaticText') {
           const t = name.toLowerCase();
-          if (t && !inside.includes(t) && (visible === undefined || visible.includes(t)))
+          if (off) return;
+          if (t && !inside.includes(t) && (visible === undefined || visible.includes(t))) {
+            // v2: outside a block, text whose box starts below the end of the previous text is a new line (rows of plain divs).
+            const box = geo?.boxes.get(n.backendDOMNodeId ?? 0);
+            if (box && !block && text.length && box.y >= textEnd) flush();
+            if (box) textEnd = box.y + box.h;
             text.push(name);
+          }
           return;
         }
         if (role === 'heading' && name) {
+          if (off) return kids(); // v2: off screen it is no line, and no control to count either
           flush();
           lines.push(`## ${name}`);
           inside = name.toLowerCase();
@@ -336,12 +666,33 @@ export class AxHelpers {
         if (!id || !(CONTROLS.has(role) || focusable)) {
           if (!BLOCKS.has(role)) return kids();
           flush();
+          block++;
           kids();
+          block--;
           return flush();
+        }
+        const value = norm(n.value?.value);
+        // A native <select> keeps its options in a popup child: summarize them instead of listing each.
+        const popup = n.childIds
+          ?.map((c) => byId.get(c))
+          .find((c) => c?.role?.value === 'MenuListPopup');
+        const shown = popup
+          ? 'select'
+          : role === 'button' && value
+            ? 'file'
+            : role === 'generic' && prop(n, 'editable')
+              ? 'textbox'
+              : role;
+        this.last.set(id, { role: shown, name });
+        const widget = popup || NATIVE_INPUTS.has(role); // their children are the browser's own widget parts
+        if (off) {
+          // v2: an off-screen control is counted, on line 2 or on its scroll area's line, not printed.
+          // It is still known: no * when it scrolls into view, and it is not a hidden file input.
+          off.by[off.above ? 'above' : 'below']++;
+          return widget ? undefined : kids();
         }
         flush();
         if (lines.at(-1)?.toLowerCase() === name.toLowerCase()) lines.pop(); // its label, printed as its name
-        const value = norm(n.value?.value);
         const states = [
           prop(n, 'checked') === undefined
             ? ''
@@ -351,28 +702,16 @@ export class AxHelpers {
           prop(n, 'expanded') === undefined ? '' : prop(n, 'expanded') ? 'expanded' : 'collapsed',
           ...['selected', 'disabled', 'focused'].map((p) => (prop(n, p) ? p : '')),
         ].filter(Boolean);
-        // A native <select> keeps its options in a popup child: summarize them instead of listing each.
-        const popup = n.childIds
-          ?.map((c) => byId.get(c))
-          .find((c) => c?.role?.value === 'MenuListPopup');
         const options: string[] = [];
         const collect = (c?: AX): unknown =>
           c?.role?.value === 'option'
             ? options.push(norm(c.name?.value))
             : c?.childIds?.forEach((k) => collect(byId.get(k)));
         collect(popup);
-        const shown = popup
-          ? 'select'
-          : role === 'button' && value
-            ? 'file'
-            : role === 'generic' && prop(n, 'editable')
-              ? 'textbox'
-              : role;
-        this.last.set(id, { role: shown, name });
         lines.push(
-          `${previous.size && !previous.has(id) ? '*' : ''}[${id}] ${shown}${name ? ` "${clip(name, 150)}"` : ''}${value ? ` = ${JSON.stringify(clip(value, 100))}` : ''}${states.length ? ` ${states.join(' ')}` : ''}${options.length ? `  options: ${options.slice(0, 5).join(' | ')}${options.length > 5 ? ` | … ${options.length - 5} more` : ''}` : ''}`,
+          `${!this.#ax.diff && previous.size && !previous.has(id) ? '*' : ''}[${id}] ${shown}${name ? ` "${clip(name, 150)}"` : ''}${value ? ` = ${JSON.stringify(clip(value, 100))}` : ''}${states.length ? ` ${states.join(' ')}` : ''}${options.length ? `  options: ${options.slice(0, 5).join(' | ')}${options.length > 5 ? ` | … ${options.length - 5} more` : ''}` : ''}`,
         );
-        if (popup || NATIVE_INPUTS.has(role)) return; // their children are the browser's own widget parts
+        if (widget) return;
         // Only what the line showed counts as said: a card link's text past the clipped name still prints.
         inside = `${inside} ${clip(name, 150)} ${value}`.toLowerCase();
         kids();
@@ -381,7 +720,22 @@ export class AxHelpers {
       walk(frame.nodes[0], '');
       flush();
       if (frame.url && lines.length > start) lines.splice(start, 0, `--- frame ${frame.url} ---`);
+      // v2: a frame that scrolls by itself has its scroll area line under its frame line.
+      const scrolls = geo?.areas.get(frame.id);
+      if (scrolls && lines.length > start) lines.splice(start + 1, 0, announce(scrolls, ''));
     }
+    // v2: a scroll area gets its line when it hides a control or more than 40 px (two lines of text).
+    let inner = 0;
+    if (announced.size)
+      lines = lines.flatMap((line) => {
+        const a = announced.get(line);
+        if (!a) return [line];
+        if (!(a.above + a.below) && a.height - a.shown <= 40) return [];
+        inner++;
+        return [
+          `[${a.id}] scroll area${a.name ? ` "${clip(a.name, 150)}"` : ''} ${view(a)} | ${a.above} above | ${a.below} below`,
+        ];
+      });
     // Styled uploaders hide their file input, which drops it from the AX tree; its id still works for uploads.
     const hidden = files
       .filter((f) => !this.last.has(f.backendNodeId))
@@ -392,8 +746,20 @@ export class AxHelpers {
         return `[${f.backendNodeId}] file "${name}" (hidden)`;
       });
     lines.unshift(...hidden);
-    const header = `[state] ${info.title} | ${info.url}${settled.pending ? ` | loading: ${settled.pending}` : ''}${this.flushDialogs()}`;
-    const max = options.max ?? 3000;
+    const screen = geo?.page;
+    // v2 line 2: where the screen is on the page, and the controls that are not on it.
+    // "whole page" only when nothing scrolls: the page fits, hides no control, and no scroll area has a line.
+    const whole = screen && screen.height <= screen.h && !(screen.above + screen.below + inner);
+    const line2 = screen
+      ? `\nview ${view(screen)} | ${whole ? 'whole page' : `${screen.above} controls above | ${screen.below} below`}${modal ? ' | modal open' : ''}`
+      : '';
+    const title = `${info.title} | ${info.url}`;
+    const loading = settled.pending ? ` | loading: ${settled.pending}` : '';
+    const dialogs = this.flushDialogs();
+    const header = `[state] ${title}${loading}${line2}${dialogs}`;
+    const max = options.max ?? (geo ? 6000 : 3000);
+    // v2: no line takes more than half the print. A longer one (a text file is one line) was cut whole.
+    if (geo) lines = lines.map((line) => clip(line, max / 2));
     const fit = (from: string[], budget: number) => {
       let size = 0;
       const n = from.findIndex((l) => (size += l.length + 1) > budget);
@@ -406,13 +772,49 @@ export class AxHelpers {
       const tail = fit(lines.toReversed(), max * 0.2);
       body = [
         ...lines.slice(0, head),
-        `... ${lines.length - head - tail} lines cut here (bu.state({max: 30000}) or page.evaluate)`,
+        screen // the cut is in the middle of the screen: half a screen further down it is at the top, if the page can go there
+          ? `... ${lines.length - head - tail} on-screen lines cut at ${max} chars: ${screen.top + screen.shown < screen.height - 1 ? 'scroll half a screen or ' : ''}read with page.evaluate`
+          : `... ${lines.length - head - tail} lines cut here (bu.state({max: 30000}) or page.evaluate)`,
         ...lines.slice(lines.length - tail),
       ];
     }
     const out = `${header}\n${body.join('\n')}\n[/state]`;
-    this.log(out);
+    // v2: the ids of the lines the model is shown are remembered with their page. An id that was only counted
+    // or cut is not: the model cannot hold an old copy of it, and a raw DOM query may return its number.
+    for (const line of geo ? body : []) {
+      const id = Number(/^\*?\[(\d+)\]/.exec(line)?.[1]);
+      const n = this.last.get(id);
+      if (n) this.#ids.set(id, { ...n, key });
+    }
+    const now = { key, page: title, view: line2, lines: body };
+    this.log(this.#ax.diff ? this.#brief(now, loading, dialogs, out, options.full) : out);
     return printed(out);
+  }
+
+  /**
+   * ax.diff: what this look prints. All of it on a first look, on a new page and on request. Else the diff,
+   * when it says what changed in at most half the chars, and the "same" form when nothing changed.
+   */
+  #brief(now: Shown, loading: string, dialogs: string, out: string, full?: boolean) {
+    const was = this.#shown;
+    this.#shown = now; // the base of the next diff is what the model has now: these lines, after the cap
+    full ||= this.full;
+    this.full = false;
+    if (!was || full || was.key !== now.key) return out;
+    const { gone, lines } = changes(was.lines, now.lines);
+    const head = [
+      // Title and url only when they changed: the Cloud UI reads text after the tag as the page title.
+      `[state diff]${now.page !== was.page || loading ? ` ${now.page}${loading}` : ''}`,
+      ...(now.view !== was.view ? [now.view.slice(1)] : []),
+      ...(dialogs ? [dialogs.slice(1)] : []),
+      ...(gone ? [`gone: ${gone}`] : []),
+    ];
+    // No line to print: nothing changed, or only what a diff cannot say (text that left, lines that moved).
+    if (head.join() === '[state diff]' && !lines.length)
+      return now.lines.join('\n') === was.lines.join('\n') ? SAME : out;
+    const diff = [...head, ...lines, '[/state]'].join('\n');
+    const marked = lines.filter((line) => line[0] !== '@').length;
+    return diff.length <= DIFF_RATIO * out.length && marked <= DIFF_LINES ? diff : out;
   }
 
   private async fileInputs(page: Page) {
@@ -450,7 +852,7 @@ export class AxHelpers {
   }
 
   private describe(id: number) {
-    const n = this.last.get(id);
+    const n = this.#ids.get(id) ?? this.last.get(id); // v2: as last printed, also after its page is gone
     return n ? `[${id}] ${n.role}${n.name ? ` "${clip(n.name, 60)}"` : ''}` : `[${id}]`;
   }
 
@@ -523,12 +925,33 @@ export class AxHelpers {
     await this.trackNetwork(page).catch(() => {});
     const before = await this.probe(page).catch(() => undefined);
     let detail: string;
+    const raw = this.raw;
+    const stale = (why: string) => {
+      this.#shown = undefined; // ax.diff: the state that follows is a full one, not a diff
+      return `stale: ${id} ${why}; use ids from ${this.#ax.autoState === false ? 'a new bu.state()' : 'the state below'}`;
+    };
     try {
+      // v2: an id last printed on an earlier page is another element here, even where Chrome reuses the number.
+      // Nothing is sent to it. The state that follows the cell has this page's ids. An id that no look has
+      // printed (from snapshot() or a DOM query) is not judged: it goes to Chrome as it is.
+      const shown = this.#ids.get(id);
+      if (shown) {
+        const { frame } = (await page.cdp('Page.getFrameTree')).frameTree;
+        if (shown.key !== `${frame.id}:${frame.loaderId}`)
+          throw new Error(stale('belongs to a previous page'));
+      }
       detail = await body(page);
     } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      // v2: an element that was removed, by Chrome's three texts for it, is stale too.
+      const gone =
+        this.#ax.state === 'v2' &&
+        /Target detached|No node with given id|does not belong to the document/.test(why);
       throw new Error(
-        `${op} ${this.describe(id)} failed: ${error instanceof Error ? error.message : String(error)}`,
+        `${op} ${this.describe(id)} failed: ${gone ? stale('is gone from this page') : why}`,
       );
+    } finally {
+      if (this.raw !== raw) this.raw = !!raw; // ax.rawInput: the helper's own input is not raw input
     }
     this.actedAt = Date.now();
     const settled = await this.settle();
@@ -634,6 +1057,55 @@ export class AxHelpers {
       if (options.enter) await this.key(page, 'Enter', 13, '\r');
       return ` = ${JSON.stringify(clip(text, 60))}${moved ? ' (into the focused overlay input)' : ''}${actual !== undefined && actual !== text ? ` (field now shows ${JSON.stringify(clip(actual, 60))})` : ''}${options.enter ? ' +Enter' : ''}`;
     });
+  }
+
+  /**
+   * ax.scroll. One wheel event over the scroll area `at`, else over what a wheel at the middle of the screen
+   * moves: the innermost scroll area there that can still go that way, else the page. One page is the height
+   * of what scrolls, so no row is skipped. Prints its new position.
+   */
+  async #scroll(to: 'down' | 'up', { pages = 1, at }: { pages?: number; at?: number } = {}) {
+    if (to !== 'down' && to !== 'up') throw new Error("scroll needs 'down' or 'up'.");
+    this.acted = true;
+    this.actedAt = 0;
+    const page = this.page();
+    // The page, then every scroll area in page order, so the innermost is the last.
+    const read = async () => {
+      const geo = layout(await page.cdp('DOMSnapshot.captureSnapshot', SNAPSHOT));
+      return [geo.page, ...geo.areas.values()];
+    };
+    const areas = await read();
+    const screen = areas[0]!;
+    const [x, y] = [screen.w / 2, screen.h / 2];
+    const moves = (a: Area) =>
+      !a.off &&
+      a.x <= x &&
+      x < a.x + a.w &&
+      a.y <= y &&
+      y < a.y + a.h &&
+      (to === 'down' ? a.top + a.shown < a.height - 1 : a.top > 0);
+    const target =
+      at === undefined
+        ? (areas.findLast(moves) ?? screen)
+        : areas.find((a) => a.id === at && !a.off);
+    if (!target)
+      throw new Error(`scroll ${to} in ${this.describe(at!)} failed: not a scroll area on screen`);
+    // The wheel goes to the middle of the part of it that is on screen.
+    const mid = (from: number, size: number, max: number) =>
+      (Math.max(from, 0) + Math.min(from + size, max)) / 2;
+    await page.cdp('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      x: mid(target.x, target.w, screen.w),
+      y: mid(target.y, target.h, screen.h),
+      deltaX: 0,
+      deltaY: (to === 'down' ? 1 : -1) * pages * target.h,
+    });
+    this.actedAt = Date.now();
+    await this.settle();
+    const now = (await read()).find((a) => a.id === target.id) ?? target;
+    const line = `[ok] scroll ${to} ${pages} page${pages === 1 ? '' : 's'}${target === screen ? '' : ` in ${this.describe(target.id)}`} -> ${now.top === target.top ? 'no change: ' : ''}${target === screen ? 'view ' : ''}${view(now)}`;
+    this.log(line);
+    return printed(line);
   }
 
   private async key(page: Page, key: string, keyCode: number, text?: string) {

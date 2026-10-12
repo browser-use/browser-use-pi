@@ -218,8 +218,14 @@ export class BrowserRuntime {
     return JSON.parse(result.valueJson);
   }
 
-  execute(code: string, timeoutMs = 30_000, signal?: AbortSignal): Promise<CellResult> {
-    return this.executeCell(code, timeoutMs, signal, false);
+  /** fullState (ax.diff): the state this cell prints is a full one, not a diff. */
+  execute(
+    code: string,
+    timeoutMs = 30_000,
+    signal?: AbortSignal,
+    fullState = false,
+  ): Promise<CellResult> {
+    return this.executeCell(code, timeoutMs, signal, false, fullState);
   }
 
   private async executeCell(
@@ -227,6 +233,7 @@ export class BrowserRuntime {
     timeoutMs: number,
     signal: AbortSignal | undefined,
     captureJson: boolean,
+    fullState = false,
   ): Promise<CellResult> {
     positiveInteger('timeoutMs', timeoutMs);
     if (this.closed) throw new Error('BrowserUse is closed.');
@@ -258,7 +265,7 @@ export class BrowserRuntime {
         signal,
       );
       worker.send(
-        { type: 'execute', code, captureJson, outputFile, runId: this.runId },
+        { type: 'execute', code, captureJson, outputFile, runId: this.runId, fullState },
         (error) => {
           if (error) this.pending?.(error);
         },
