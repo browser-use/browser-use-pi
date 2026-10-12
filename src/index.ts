@@ -73,6 +73,8 @@ export class BrowserUse {
     validateSensitiveData(options.sensitiveData);
     options = {
       ...options,
+      // Experiment branch: the v2 state print is on unless the caller passes ax.
+      ax: options.ax ?? { state: 'v2', rawInput: true },
       redact: [
         ...(options.redact ?? []),
         ...Object.values(options.sensitiveData ?? {}).map((secret) => secret.value),
