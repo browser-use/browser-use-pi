@@ -45,6 +45,8 @@ type Area = Rect & {
   name?: string;
   in?: Area;
   off: Off | null;
+  /** ax.small: its content is at most that many screens high, so all of it is printed. */
+  whole: boolean;
 };
 /** v2. The scroll area that hides a box, and on which side. */
 type Off = { by: Area; above: boolean };
@@ -61,8 +63,12 @@ function offBy(box: Rect, inside: Area): Off | null {
   if (inside.off) return inside.off; // an area that is off screen hides its content the same way
   let { y, h } = box;
   for (let a: Area | undefined = inside; a; a = a.in) {
-    if (y + h <= a.y) return { by: a, above: true };
-    if (y >= a.y + a.h) return { by: a, above: false };
+    const above = y + h <= a.y;
+    if (above || y >= a.y + a.h) {
+      if (!a.whole) return { by: a, above };
+      ({ y, h } = a); // a small area hides nothing: further out, its own box stands for what it holds
+      continue;
+    }
     // Only the part inside this area can show further out.
     h = Math.min(y + h, a.y + a.h) - Math.max(y, a.y);
     y = Math.max(y, a.y);
@@ -74,7 +80,7 @@ function offBy(box: Rect, inside: Area): Off | null {
  * v2. The box of every laid-out node in viewport px, with its nearest scroll area, from one DOMSnapshot.
  * Its bounds are document px and already include the scroll of inner areas, fixed and sticky offsets.
  */
-function layout(snap: Protocol.DOMSnapshot.CaptureSnapshotResponse) {
+function layout(snap: Protocol.DOMSnapshot.CaptureSnapshotResponse, small = 0) {
   const boxes = new Map<number, Rect & { in: Area }>();
   const areas = new Map<number | string, Area>(); // by backendNodeId; a frame's own scroll by its frame id
   type Scroll = (number | undefined)[]; // [scrollLeft, scrollTop, , scrollHeight]
@@ -89,6 +95,7 @@ function layout(snap: Protocol.DOMSnapshot.CaptureSnapshotResponse) {
     below: 0,
     ...(within ? { in: within } : {}),
     off: within ? offBy(box, within) : null,
+    whole: (scroll[3] ?? 0) <= small * (docs[0]?.area.h ?? box.h),
   });
   // Per document: what to add to its bounds, and the area its nodes are in.
   const docs: { x: number; y: number; area: Area }[] = [];
@@ -592,7 +599,7 @@ export class AxHelpers {
     const text: string[] = [];
     const flush = () => text.length && lines.push(text.splice(0).join(' '));
     // v2 prints only what is on screen: geo has every box, and what is off screen is counted per scroll area.
-    const geo = snap && layout(snap);
+    const geo = snap && layout(snap, this.#ax.small);
     const announced = new Map<string, Area>();
     const announce = (area: Area, name: string) => {
       // Stands in for the area's line until the walk has counted what it hides. No line starts with a space.
@@ -1071,7 +1078,7 @@ export class AxHelpers {
     const page = this.page();
     // The page, then every scroll area in page order, so the innermost is the last.
     const read = async () => {
-      const geo = layout(await page.cdp('DOMSnapshot.captureSnapshot', SNAPSHOT));
+      const geo = layout(await page.cdp('DOMSnapshot.captureSnapshot', SNAPSHOT), this.#ax.small);
       return [geo.page, ...geo.areas.values()];
     };
     const areas = await read();

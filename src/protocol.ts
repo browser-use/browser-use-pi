@@ -42,6 +42,8 @@ export interface AxOptions {
    * most half the full print, and [state same] when nothing did. No * marks.
    */
   diff?: boolean;
+  /** With state 'v2': a page or scroll area whose content is at most this many screens high is printed whole. */
+  small?: number;
 }
 export interface WorkerConfig extends importPolicy {
   mode?: 'default' | 'ultrafast';

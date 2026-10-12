@@ -931,6 +931,33 @@ test('diff: line 1 after the tag keeps the loading count, and an accepted dialog
   );
 });
 
+test('small: a frame or page of at most that many screens prints whole, a longer one by screen', async () => {
+  const small = await create({ state: 'v2', rawInput: true, small: 3 });
+  try {
+    // The frame shows 200 px of 60 buttons: without the switch a few print and the rest is counted.
+    const framed = await open(small, '/scrollframe');
+    assert.deepEqual(printed(framed), numbered('Framed', 60));
+    assert.match(framed, /^\[\d+\] scroll area 0-200 of \d+ px \| 0 above \| 0 below$/m);
+    // 40 rows of 50 px are under 3 screens: all print, and line 2 says nothing is hidden.
+    const rows = numbered('Row', 40).map(
+      (r) => `<button style="display:block;height:50px">${r}</button>`,
+    );
+    const page = await open(small, '', `data:text/html,${encodeURIComponent(rows.join(''))}`);
+    assert.deepEqual(printed(page), numbered('Row', 40));
+    assert.match(line2(page), /^view 0-(\d+) of 2\d\d\d px \| 0 controls above \| 0 below$/);
+    // A long page and a long list are not small.
+    const long = await open(small, '/long');
+    assert.deepEqual(printed(long), await onScreen(small));
+    assert.match(line2(long), /\| 0 controls above \| [1-9]\d* below$/);
+    assert.match(
+      await open(small, '/innerscroll'),
+      /scroll area "Results" .* \| 0 above \| [1-9]\d* below$/m,
+    );
+  } finally {
+    await small.close();
+  }
+});
+
 test('line 1 keeps the loading count and the dialog line follows line 2', async () => {
   // Last: the page keeps requests open, which holds each look for its 3 s cap.
   const state = await open(v2, '/alert');
