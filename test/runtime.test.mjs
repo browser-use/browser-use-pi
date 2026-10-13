@@ -91,6 +91,12 @@ test('raw input, DOM extraction, AX discovery and native vision share the persis
   assert.equal(Buffer.from(result.images[0].data, 'base64')[0], 0xff);
   assert.ok(!result.text.includes('/9j/'));
 });
+test('page.screenshot({send: false}) returns the bytes without showing the model', async () => {
+  const quiet = await agent.execute('(await page.screenshot({ send: false })).length > 0');
+  assert.equal(quiet.text, 'true');
+  assert.equal(quiet.images.length, 0);
+  assert.equal((await agent.execute('(await page.screenshot()).length > 0')).images.length, 1);
+});
 test('same-origin and cross-origin frames remain available through raw CDP', async () => {
   await agent.execute(`const crossUrl=${JSON.stringify(fixture.url.replace('127.0.0.1', 'localhost'))}+'/frame';
     await page.evaluate(url=>{const f=document.createElement('iframe');f.src=url;document.body.append(f)},crossUrl);`);

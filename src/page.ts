@@ -173,7 +173,8 @@ export class Page {
       clickCount: 1,
     });
   }
-  async screenshot(options: { quality?: number } = {}) {
+  /** send: false returns the bytes without showing the image to the model. */
+  async screenshot(options: { quality?: number; send?: boolean } = {}) {
     // The page's own devicePixelRatio (emulation changes it) makes image pixels page.clickAt coordinates.
     // Raw evaluate: page.evaluate's userGesture would grant the page a user activation per capture.
     const clip = await this.cdp('Runtime.evaluate', {
@@ -187,12 +188,19 @@ export class Page {
         if (!(error instanceof Error) || !contextLost.test(error.message)) throw error;
       },
     );
-    const { data } = await this.cdp('Page.captureScreenshot', {
-      format: 'jpeg',
-      quality: options.quality ?? 70,
-      ...(clip && { clip }),
-    });
-    return Buffer.from(data, 'base64');
+    // The worker attaches every captured screenshot it observes; not observing this one keeps it out.
+    const observe = this.connection.observeResponse;
+    if (options.send === false) this.connection.observeResponse = undefined;
+    try {
+      const { data } = await this.cdp('Page.captureScreenshot', {
+        format: 'jpeg',
+        quality: options.quality ?? 70,
+        ...(clip && { clip }),
+      });
+      return Buffer.from(data, 'base64');
+    } finally {
+      this.connection.observeResponse = observe;
+    }
   }
   async close() {
     await this.ready();
