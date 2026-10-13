@@ -93,3 +93,58 @@ test('snapshots include control state inside shadow DOM', async () => {
     await chrome.close();
   }
 });
+
+test('snapshots leave out text that is not shown', async () => {
+  const chrome = await openBrowser();
+  const cdp = await CDP.connect(chrome.endpoint);
+  try {
+    const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+    const page = await Page.attach(cdp, targetId);
+    // A success line rendered ahead of time and revealed later, hidden each of the ways pages hide it.
+    await page.goto(
+      'data:text/html,' +
+        encodeURIComponent(`
+      <h1>Sign up</h1>
+      <p>Fill in the form</p>
+      <div id="faded" style="opacity:0">Form submitted successfully</div>
+      <div id="unseen" style="visibility:hidden">Challenge completed</div>
+      <div style="opacity:0"><span>Thanks for signing up</span></div>
+      <div style="display:contents"><span>Shown through its parent</span></div>
+      <div id="host"></div>
+      <button>Submit</button>
+      <script>
+        document.querySelector('#host').attachShadow({ mode: 'open' }).innerHTML =
+          '<p>Inside a shadow root</p><p style="opacity:0">Shadow success</p>';
+      </script>
+    `),
+    );
+    const texts = async () =>
+      (await page.snapshot()).nodes
+        .filter((n) => n.role === 'StaticText')
+        .map((n) => n.name)
+        .sort();
+    const shown = [
+      'Fill in the form',
+      'Inside a shadow root',
+      'Shown through its parent',
+      'Sign up',
+      'Submit',
+    ];
+    assert.deepEqual(await texts(), shown);
+    // Everything that is not text stays: hidden text is all the filter removes.
+    const roles = (await page.snapshot()).nodes.map((n) => n.role);
+    for (const role of ['RootWebArea', 'heading', 'button']) assert.ok(roles.includes(role), role);
+
+    await page.evaluate(() => {
+      document.querySelector('#faded').style.opacity = '1';
+      document.querySelector('#unseen').style.visibility = 'visible';
+    });
+    assert.deepEqual(
+      await texts(),
+      [...shown, 'Challenge completed', 'Form submitted successfully'].sort(),
+    );
+  } finally {
+    cdp.close();
+    await chrome.close();
+  }
+});
