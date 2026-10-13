@@ -51,11 +51,11 @@ const look = () =>
 test('every native date/time input prints as one field, never as its day/month/year parts', async () => {
   const state = await look();
   // Unlabelled and empty inside a shadow root: still one line, with the value to type.
-  assert.match(state, /^\[\d+\] date {2}type as 2026-10-14$/m);
-  assert.match(state, /^\[\d+\] date "Return" = "2025-06-14" {2}type as 2026-10-14$/m);
-  assert.match(state, /^\[\d+\] time "At" {2}type as 14:30$/m);
-  assert.match(state, /^\[\d+\] datetime "Start" {2}type as 2026-10-14T14:30$/m);
-  assert.match(state, /^\[\d+\] datetime "Month" {2}type as 2026-10-14T14:30$/m);
+  assert.match(state, /^\[\d+\] date {2}type as YYYY-MM-DD$/m);
+  assert.match(state, /^\[\d+\] date "Return" = "2025-06-14" {2}type as YYYY-MM-DD$/m);
+  assert.match(state, /^\[\d+\] time "At" {2}type as HH:MM$/m);
+  assert.match(state, /^\[\d+\] datetime "Start" {2}type as YYYY-MM-DDTHH:MM$/m);
+  assert.match(state, /^\[\d+\] datetime "Month" {2}type as YYYY-MM-DDTHH:MM$/m);
   assert.doesNotMatch(state, /spinbutton|Show \w+ picker/);
   assert.match(state, /^\[\d+\] button "Submit"$/m);
 });
@@ -84,7 +84,7 @@ test('typing an ISO value sets the field and fires input and change', async () =
   );
   assert.match(
     await run('await bu.state()'),
-    /^\*?\[\d+\] date = "2025-06-14" {2}type as 2026-10-14$/m,
+    /^\*?\[\d+\] date = "2025-06-14" {2}type as YYYY-MM-DD$/m,
   );
 });
 
