@@ -173,7 +173,7 @@ export async function runAgent(
     const text = typeof output === 'string' ? output : JSON.stringify(output);
     if (text === undefined) throw new Error('The final result must be JSON serializable.');
     // Low effort often stops with requested items unverified while time remains: send that back once.
-    if (!finalizing && !gated && GAVE_UP.test(text.slice(0, 3000))) {
+    if (config.reasoning === 'low' && !finalizing && !gated && GAVE_UP.test(text.slice(0, 3000))) {
       gated = true;
       throw new Error(
         "Result rejected once: it reports requested items as missing or unverified, and time remains. Work on the missing items (another query, the site's own search or filters, another source), then finish again. If they truly cannot be found, finish with the same answer.",
