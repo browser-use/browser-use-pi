@@ -12,10 +12,10 @@ const CONTROLS = new Set(
 /** Text inside these is one line; text across them is not joined. */
 const BLOCKS = new Set(['paragraph', 'listitem', 'row', 'LabelText']);
 /** Native date/time inputs print as one field and take their ISO value: Chrome's own day/month/year parts are never typed into. */
-const NATIVE_INPUTS: Record<string, [role: string, example: string]> = {
-  Date: ['date', '2026-10-14'],
-  InputTime: ['time', '14:30'],
-  DateTime: ['datetime', '2026-10-14T14:30'],
+const NATIVE_INPUTS: Record<string, [role: string, format: string]> = {
+  Date: ['date', 'YYYY-MM-DD'],
+  InputTime: ['time', 'HH:MM'],
+  DateTime: ['datetime', 'YYYY-MM-DDTHH:MM'],
 };
 /** The value each native input type takes, for the error when a typed value is refused. */
 const NATIVE_FORMATS: Record<string, string> = {
