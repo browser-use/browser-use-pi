@@ -50,6 +50,8 @@ export class AxHelpers {
     private page: () => Page,
     private browser: () => CDP,
     private log: (text: string) => void,
+    /** Chars left under the cell's output cap, after what the cell has printed so far. */
+    private room: () => number,
   ) {}
 
   private inflight = new Map<string, Map<string, number>>();
@@ -290,8 +292,11 @@ export class AxHelpers {
     }
   }
 
-  /** The page as one list in page order. */
-  async state(options: { max?: number } = {}) {
+  /**
+   * The page as one list in page order. `share` is how much of what is left under the cell's output cap this look
+   * may take: a look from the cell's code leaves a fifth for a look after it, the print after the cell takes it all.
+   */
+  async state(options: { max?: number } = {}, share = 0.8) {
     const page = this.page();
     // A look right after an action continues that action's quiet window instead of starting a new one.
     const since = this.acted ? this.actedAt : 0;
@@ -396,7 +401,11 @@ export class AxHelpers {
       });
     lines.unshift(...hidden);
     const header = `[state] ${info.title} | ${info.url}${settled.pending ? ` | loading: ${settled.pending}` : ''}${this.flushDialogs()}`;
-    const max = options.max ?? 3000;
+    const upload = [...this.last.values()].some((n) => n.role === 'file') ? `\n${UPLOAD}` : '';
+    // A long page shows as much of itself as the cap allows, and what the cell printed before never pushes the
+    // end of the state (its last lines, [upload], [/state]) past the cap.
+    const max =
+      options.max ?? Math.max(500, (this.room() - header.length - upload.length - 120) * share);
     const fit = (from: string[], budget: number) => {
       let size = 0;
       const n = from.findIndex((l) => (size += l.length + 1) > budget);
@@ -413,7 +422,6 @@ export class AxHelpers {
         ...lines.slice(lines.length - tail),
       ];
     }
-    const upload = [...this.last.values()].some((n) => n.role === 'file') ? `\n${UPLOAD}` : '';
     const out = `${header}\n${body.join('\n')}${upload}\n[/state]`;
     this.log(out);
     return printed(out);

@@ -107,6 +107,7 @@ const bu =
         () => Reflect.get(realm, 'page') as Page,
         () => browser,
         (text) => (Reflect.get(realm, 'console') as Console).log(text),
+        () => config.maxOutputChars - output.length - pendingText.length,
       )
     : undefined;
 // The search endpoint under the cloud worker's names; transcripts restored from before search() used them.
@@ -437,7 +438,7 @@ process.on('message', async (message: WorkerRequest) => {
     // After a cell whose bu actions reached the page, show the resulting state without another model turn.
     if (bu?.acted)
       await bu
-        .state()
+        .state({}, 1)
         .catch((error: unknown) => sink.write(`[state unavailable: ${String(error)}]\n`));
     active = false;
     browser.observeResponse = undefined;
