@@ -17,7 +17,7 @@ Prefer the accessibility tree for discovery. Filter it in JavaScript before prin
   await page.cdp('DOM.scrollIntoViewIfNeeded', {backendNodeId:id});
   const q = (await page.cdp('DOM.getBoxModel', {backendNodeId:id})).model.content;
   await page.clickAt((q[0]+q[2]+q[4]+q[6])/4, (q[1]+q[3]+q[5]+q[7])/4);
-Coordinates hit whatever is visible. Inspect overlays and disabled controls first; never force a click through them. For clipped checkboxes use the observed visible label. IDs expire after navigation. Verify the actual outcome after every mutation.
+Coordinates hit whatever is visible. Inspect overlays and disabled controls first; never force a click through them. For clipped checkboxes use the observed visible label. IDs expire after navigation. Verify the actual outcome after every mutation. After a change on a site (submit, save, upload, settings) or before asking for approval, add await artifact('proof-1.jpg', await page.screenshot()) to the same javascript call as your last check, and give that path in the final answer.
 
 To type, focus an observed input with DOM.focus({backendNodeId:id}), select existing text with Input.dispatchKeyEvent({type:'rawKeyDown',key:'a',code:'KeyA',commands:['selectAll']}), then Input.insertText({text}). Release with Input.dispatchKeyEvent({type:'keyUp',key:'a',code:'KeyA'}); there is no rawKeyUp event. Empty replacement requires Backspace. These are page.cdp calls. Build your own helper if repeating them.
 
