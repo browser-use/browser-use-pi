@@ -11,7 +11,20 @@ const CONTROLS = new Set(
 );
 /** Text inside these is one line; text across them is not joined. */
 const BLOCKS = new Set(['paragraph', 'listitem', 'row', 'LabelText']);
-const NATIVE_INPUTS = new Set(['Date', 'DateTime', 'InputTime']);
+/** Native date/time inputs print as one field and take their ISO value: Chrome's own day/month/year parts are never typed into. */
+const NATIVE_INPUTS: Record<string, [role: string, example: string]> = {
+  Date: ['date', '2026-10-14'],
+  InputTime: ['time', '14:30'],
+  DateTime: ['datetime', '2026-10-14T14:30'],
+};
+/** The value each native input type takes, for the error when a typed value is refused. */
+const NATIVE_FORMATS: Record<string, string> = {
+  date: 'YYYY-MM-DD',
+  time: 'HH:MM',
+  'datetime-local': 'YYYY-MM-DDTHH:MM',
+  month: 'YYYY-MM',
+  week: 'YYYY-Www',
+};
 const norm = (s: unknown) =>
   String(s ?? '')
     .replace(/\s+/g, ' ')
@@ -336,7 +349,7 @@ export class AxHelpers {
           prop(n, 'focusable') &&
           role !== 'RootWebArea' &&
           (name || n.value?.value || prop(n, 'editable'));
-        if (!id || !(CONTROLS.has(role) || focusable)) {
+        if (!id || !(CONTROLS.has(role) || focusable || role in NATIVE_INPUTS)) {
           if (!BLOCKS.has(role)) return kids();
           flush();
           kids();
@@ -370,12 +383,12 @@ export class AxHelpers {
             ? 'file'
             : role === 'generic' && prop(n, 'editable')
               ? 'textbox'
-              : role;
+              : (NATIVE_INPUTS[role]?.[0] ?? role);
         this.last.set(id, { role: shown, name });
         lines.push(
-          `${previous.size && !previous.has(id) ? '*' : ''}[${id}] ${shown}${name ? ` "${clip(name, 150)}"` : ''}${value ? ` = ${JSON.stringify(clip(value, 100))}` : ''}${states.length ? ` ${states.join(' ')}` : ''}${options.length ? `  options: ${options.slice(0, 5).join(' | ')}${options.length > 5 ? ` | … ${options.length - 5} more` : ''}` : ''}`,
+          `${previous.size && !previous.has(id) ? '*' : ''}[${id}] ${shown}${name ? ` "${clip(name, 150)}"` : ''}${value ? ` = ${JSON.stringify(clip(value, 100))}` : ''}${states.length ? ` ${states.join(' ')}` : ''}${options.length ? `  options: ${options.slice(0, 5).join(' | ')}${options.length > 5 ? ` | … ${options.length - 5} more` : ''}` : ''}${role in NATIVE_INPUTS ? `  type as ${NATIVE_INPUTS[role]![1]}` : ''}`,
         );
-        if (popup || NATIVE_INPUTS.has(role)) return; // their children are the browser's own widget parts
+        if (popup || role in NATIVE_INPUTS) return; // their children are the browser's own widget parts
         // Only what the line showed counts as said: a card link's text past the clipped name still prints.
         inside = `${inside} ${clip(name, 150)} ${value}`.toLowerCase();
         kids();
@@ -585,14 +598,11 @@ export class AxHelpers {
         );
         return ` = ${JSON.stringify(label)}`;
       }
-      if (
-        kind.tag === 'INPUT' &&
-        ['date', 'time', 'datetime-local', 'month', 'week'].includes(kind.type)
-      ) {
+      if (kind.tag === 'INPUT' && kind.type in NATIVE_FORMATS) {
         await this.onNode(
           page,
           id,
-          `function(v){const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set,old=this.value;s.call(this,v);if(this.value!==v){s.call(this,old);throw Error('Invalid native date/time value; use its ISO format');}this.dispatchEvent(new Event('input',{bubbles:true}));this.dispatchEvent(new Event('change',{bubbles:true}));}`,
+          `function(v){const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set,old=this.value;s.call(this,v);if(this.value!==v){s.call(this,old);throw Error('not a value for <input type='+this.type+'>; use '+${JSON.stringify(NATIVE_FORMATS)}[this.type]);}this.dispatchEvent(new Event('input',{bubbles:true,composed:true}));this.dispatchEvent(new Event('change',{bubbles:true}));}`,
           text,
         );
         return ` = ${JSON.stringify(text)}`;
