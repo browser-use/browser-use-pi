@@ -67,6 +67,7 @@ export class BrowserUse {
   }
 
   static async create(options: BrowserUseOptions): Promise<BrowserUse> {
+    options = { ...options, ax: options.ax ?? { state: 'axtree' } }; // climb: on by default, for adapters that pass no options
     if (options.telemetry !== undefined && typeof options.telemetry !== 'boolean')
       throw new Error('telemetry must be boolean.');
     navigationPolicy(options);
