@@ -58,3 +58,24 @@ test('the upload recipe prints only with a file line, and running it sets the by
     "'cv.txt:text'",
   );
 });
+
+test('a date input with no label prints as one field that takes an ISO date, also in shadow DOM', async () => {
+  const html = `<input type="date" id="light"><div id="host"></div><script>document.querySelector('#host').attachShadow({mode:'open'}).innerHTML='<input type="date" id="shadow">'</script>`;
+  const state = (
+    await agent.execute(
+      `await page.goto('data:text/html,' + encodeURIComponent(${JSON.stringify(html)})); await bu.state()`,
+    )
+  ).text;
+  assert.doesNotMatch(state, /spinbutton/);
+  const ids = [...state.matchAll(/^\[(\d+)\] Date/gm)].map((m) => m[1]);
+  assert.equal(ids.length, 2, state);
+  await agent.execute(ids.map((id) => `await bu.type(${id}, '2025-06-14')`).join('; '));
+  assert.equal(
+    (
+      await agent.execute(
+        "await page.evaluate(() => [document.querySelector('#light').value, document.querySelector('#host').shadowRoot.querySelector('#shadow').value])",
+      )
+    ).text.trim(),
+    "[ '2025-06-14', '2025-06-14' ]",
+  );
+});

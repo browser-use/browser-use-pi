@@ -336,7 +336,8 @@ export class AxHelpers {
           prop(n, 'focusable') &&
           role !== 'RootWebArea' &&
           (name || n.value?.value || prop(n, 'editable'));
-        if (!id || !(CONTROLS.has(role) || focusable)) {
+        // A date or time input with no label and no value is still one field: its spinbuttons mistype (0005-06-04).
+        if (!id || !(CONTROLS.has(role) || NATIVE_INPUTS.has(role) || focusable)) {
           if (!BLOCKS.has(role)) return kids();
           flush();
           kids();
