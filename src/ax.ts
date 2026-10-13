@@ -2,6 +2,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { Protocol } from 'devtools-protocol';
 import type { Page } from './page.js';
 import type { CDP } from './cdp.js';
+import type { AxOptions } from './protocol.js';
+import { AxTree, captureFrames } from './axtree.js';
 
 type AX = Protocol.Accessibility.AXNode;
 const CONTROLS = new Set(
@@ -41,6 +43,18 @@ Ultrafast: the global \`bu\` in the javascript REPL. Each model call costs ~1 s,
 - alert/confirm/prompt/beforeunload dialogs are accepted automatically; their text is printed as [dialog ...].
 `;
 
+/** ax.state 'axtree': the page as a numbered tree, ids are its numbers. */
+const AXTREE_PROMPT = AX_PROMPT.replace(
+  /- Look:[^]*?CDP DOM command\.\n/,
+  `- Look: await page.goto(url); await bu.state() prints the page as a numbered tree, one element per line, a tab per depth, each frame's page inside its iframe: <n> <role> (<states>) <name>, Value: ..., ID: <DOM id>. A later look at the same page prints only what changed (~ changed, + added, removed ids) when that is much shorter; bu.state({full: true}) prints all of it. After a javascript call whose bu actions reached the page, the state is printed automatically.
+  Ids are the numbers of the last look and end with the page: after a navigation, look again. bu.node(n) gives the element's Chrome backendNodeId for CDP DOM commands.
+`,
+)
+  .replace('bu.click(1400); await bu.type(812', 'bu.click(14); await bu.type(8')
+  .replace('bu.type(830', 'bu.type(9');
+
+export const axPrompt = (ax: AxOptions = {}) => (ax.state === 'axtree' ? AXTREE_PROMPT : AX_PROMPT);
+
 /** Printed under a state that has a file line, so other pages' prompts carry none of it. */
 const UPLOAD = `[upload] set a file line's files with const {object} = await page.cdp('DOM.resolveNode', {backendNodeId: id}); await page.cdp('Runtime.callFunctionOn', {objectId: object.objectId, arguments: [{value: require('fs').readFileSync(await artifact('cv.txt', 'text'), 'base64')}], functionDeclaration: "function(b) { const d = new DataTransfer(); d.items.add(new File([Uint8Array.from(atob(b), (c) => c.charCodeAt(0))], 'cv.txt')); this.files = d.files; for (const t of ['input', 'change']) this.dispatchEvent(new Event(t, {bubbles: true})) }"})`;
 
@@ -50,7 +64,13 @@ export class AxHelpers {
     private page: () => Page,
     private browser: () => CDP,
     private log: (text: string) => void,
-  ) {}
+    ax: AxOptions = {},
+  ) {
+    if (ax.state === 'axtree') this.tree = new AxTree();
+  }
+
+  /** ax.state 'axtree': numbers of the last print and the elements they point at. Not a property otherwise. */
+  declare private tree: AxTree | undefined;
 
   private inflight = new Map<string, Map<string, number>>();
   private lastNet = new Map<string, number>();
@@ -291,12 +311,13 @@ export class AxHelpers {
   }
 
   /** The page as one list in page order. */
-  async state(options: { max?: number } = {}) {
+  async state(options: { max?: number; full?: boolean } = {}) {
     const page = this.page();
     // A look right after an action continues that action's quiet window instead of starting a new one.
     const since = this.acted ? this.actedAt : 0;
     this.acted = false; // a look after the last action replaces the automatic print
     const settled = await this.settle({ capMs: 3000, since });
+    if (this.tree) return this.treeState(page, this.tree, settled, options.full);
     // The settle probe already has URL and title, and says whether a file input needs looking up.
     const [frames, info, visible, files] = await Promise.all([
       this.capture(page),
@@ -389,8 +410,7 @@ export class AxHelpers {
     const hidden = files
       .filter((f) => !this.last.has(f.backendNodeId))
       .map((f) => {
-        const at = (k: string) => f.attributes?.find((_, i, a) => i % 2 === 1 && a[i - 1] === k);
-        const name = at('aria-label') ?? at('name') ?? at('id') ?? '';
+        const name = fileName(f);
         this.last.set(f.backendNodeId, { role: 'file', name });
         return `[${f.backendNodeId}] file "${name}" (hidden)`;
       });
@@ -419,6 +439,66 @@ export class AxHelpers {
     return printed(out);
   }
 
+  /** ax.state 'axtree': the numbered tree of every frame, or what changed since the last look at this page. */
+  private async treeState(
+    page: Page,
+    tree: AxTree,
+    settled: Awaited<ReturnType<AxHelpers['settle']>>,
+    full = false,
+  ) {
+    const capture = async () => {
+      for (let i = 0; ; i++) {
+        try {
+          return await captureFrames(this.browser(), page.sessionId, tree.attached);
+        } catch (error) {
+          if (i >= 20 || !isContextLoss(error)) throw error;
+          await delay(50);
+        }
+      }
+    };
+    const [frames, info, files] = await Promise.all([
+      capture(),
+      settled.probe ?? page.info(),
+      settled.probe?.files === false ? [] : this.fileInputs(page).catch(() => []),
+    ]);
+    const body = tree.render(frames, full);
+    const shown = new Set([...tree.targets.values()].map((t) => `${t.session}:${t.node}`));
+    // Styled uploaders hide their file input, which drops it from the AX tree; its number still works for uploads.
+    const hidden = files
+      .filter((f) => !shown.has(`${page.sessionId}:${f.backendNodeId}`))
+      .map((f) => tree.add(f.backendNodeId, page.sessionId, `file input (hidden) ${fileName(f)}`));
+    const upload = files.length
+      ? `\n${UPLOAD.replace("a file line's", "a file input's").replace('{backendNodeId: id}', '{backendNodeId: bu.node(id)}')}`
+      : '';
+    const out = `[state] ${info.title} | ${info.url}${settled.pending ? ` | loading: ${settled.pending}` : ''}${this.flushDialogs()}\n${[...hidden, body].join('\n')}${upload}\n[/state]`;
+    this.log(out);
+    return printed(out);
+  }
+
+  /** ax.state 'axtree': the Chrome backendNodeId behind a number of the last look (an id is its own otherwise). */
+  node(id: number) {
+    if (!this.tree) return id;
+    const t = this.tree.targets.get(id);
+    if (!t) throw new Error(`${id} is not a number of the last look; look again with bu.state()`);
+    return t.node;
+  }
+
+  /** The element behind an id and a CDP sender for its frame's session. Refuses a number of an earlier page. */
+  private async target(
+    page: Page,
+    id: number,
+  ): Promise<{ node: number; session: string; send: Page['cdp'] }> {
+    if (!this.tree) return { node: id, session: page.sessionId, send: page.cdp.bind(page) };
+    const node = this.node(id);
+    const t = this.tree.targets.get(id)!;
+    const { frameTree } = await page.cdp('Page.getFrameTree');
+    if (`${frameTree.frame.id}:${frameTree.frame.loaderId}` !== t.doc)
+      throw new Error(`${id} belongs to a previous page; look again with bu.state()`);
+    const send = ((method: string, params?: object) =>
+      this.browser().send(method as 'DOM.focus', params as never, t.session)) as Page['cdp'];
+    return { node, session: t.session, send };
+  }
+
   private async fileInputs(page: Page) {
     const { root } = await page.cdp('DOM.getDocument', { depth: 0 });
     const { nodeIds } = await page.cdp('DOM.querySelectorAll', {
@@ -430,11 +510,15 @@ export class AxHelpers {
     );
   }
 
-  private async onNode<T>(page: Page, id: number, fn: string, argument?: unknown): Promise<T> {
-    const { object } = await page.cdp('DOM.resolveNode', { backendNodeId: id });
+  private async onNode<T>(
+    t: { node: number; send: Page['cdp'] },
+    fn: string,
+    argument?: unknown,
+  ): Promise<T> {
+    const { object } = await t.send('DOM.resolveNode', { backendNodeId: t.node });
     if (!object.objectId) throw new Error('Node unavailable.');
     try {
-      const response = await page.cdp('Runtime.callFunctionOn', {
+      const response = await t.send('Runtime.callFunctionOn', {
         objectId: object.objectId,
         functionDeclaration: fn,
         arguments: [{ value: argument }],
@@ -449,22 +533,36 @@ export class AxHelpers {
         );
       return response.result.value as T;
     } finally {
-      await page.cdp('Runtime.releaseObject', { objectId: object.objectId }).catch(() => {});
+      await t.send('Runtime.releaseObject', { objectId: object.objectId }).catch(() => {});
     }
   }
 
   private describe(id: number) {
+    const line = this.tree?.line(id);
+    if (line) return clip(line, 80);
     const n = this.last.get(id);
     return n ? `[${id}] ${n.role}${n.name ? ` "${clip(n.name, 60)}"` : ''}` : `[${id}]`;
   }
 
   /** Scroll into view and return a clickable, unobstructed center point, or throw a precise reason. */
-  private async point(page: Page, id: number, editableCover = false) {
-    await page.cdp('DOM.scrollIntoViewIfNeeded', { backendNodeId: id }).catch(() => {});
-    const p = await this.onNode<{ x: number; y: number; covered: boolean }>(
-      page,
-      id,
-      `function(editableCover) {
+  private async point(
+    page: Page,
+    t: Awaited<ReturnType<AxHelpers['target']>>,
+    editableCover = false,
+  ) {
+    await t.send('DOM.scrollIntoViewIfNeeded', { backendNodeId: t.node }).catch(() => {});
+    // Out-of-process frames: their iframe elements come into view too, and add their offset to the point.
+    const owners: { session: string; node: number }[] = [];
+    for (let o = this.tree?.owners.get(t.session); o; o = this.tree!.owners.get(o.session))
+      owners.push(o);
+    for (const o of owners)
+      await this.browser()
+        .send('DOM.scrollIntoViewIfNeeded', { backendNodeId: o.node }, o.session)
+        .catch(() => {});
+    const sample = () =>
+      this.onNode<{ x: number; y: number; covered: boolean }>(
+        t,
+        `function(editableCover) {
         const e = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;
         if (!e || !e.isConnected) throw Error('Target detached');
         if (e.matches(':disabled') || e.closest('[inert],[aria-disabled="true"]')) throw Error('Target disabled');
@@ -484,8 +582,25 @@ export class AxHelpers {
         }
         return {x: px, y: py, covered};
       }`,
-      editableCover,
-    );
+        editableCover,
+      );
+    let p = await sample();
+    // ax 'axtree': aim once the box holds still (two samples 25 ms apart within half a pixel, at most 500 ms).
+    for (const end = Date.now() + 500; this.tree && Date.now() < end;) {
+      await delay(25);
+      const q = await sample();
+      const still = Math.abs(q.x - p.x) <= 0.5 && Math.abs(q.y - p.y) <= 0.5;
+      p = q;
+      if (still) break;
+    }
+    for (const o of owners) {
+      const { model } = await this.browser().send(
+        'DOM.getBoxModel',
+        { backendNodeId: o.node },
+        o.session,
+      );
+      p = { ...p, x: p.x + model.content[0]!, y: p.y + model.content[1]! };
+    }
     if (!p.covered) return p;
     const hit = await page
       .cdp('DOM.getNodeForLocation', { x: Math.round(p.x), y: Math.round(p.y) })
@@ -553,7 +668,7 @@ export class AxHelpers {
 
   async click(id: number) {
     return this.act('click', id, async (page) => {
-      const p = await this.point(page, id);
+      const p = await this.point(page, await this.target(page, id));
       await page.clickAt(p.x, p.y);
       return '';
     });
@@ -562,15 +677,14 @@ export class AxHelpers {
   async type(id: number, text: string, options: { enter?: boolean } = {}) {
     if (typeof text !== 'string') throw new Error('type needs a string.');
     return this.act('type', id, async (page) => {
+      const t = await this.target(page, id);
       const kind = await this.onNode<{ tag: string; type: string }>(
-        page,
-        id,
+        t,
         `function(){const e=this.nodeType===1?this:this.parentElement;if(!e||!e.isConnected)throw Error('Target detached');return {tag:e.tagName,type:e.type||''};}`,
       );
       if (kind.tag === 'SELECT') {
         const label = await this.onNode<string>(
-          page,
-          id,
+          t,
           `function(want){
             const n = s => String(s).replace(/\\s+/g,' ').trim().toLowerCase(), opts = [...this.options].filter(o => !o.disabled);
             const pre = opts.filter(o => n(o.label).startsWith(n(want)));
@@ -589,22 +703,20 @@ export class AxHelpers {
         ['date', 'time', 'datetime-local', 'month', 'week'].includes(kind.type)
       ) {
         await this.onNode(
-          page,
-          id,
+          t,
           `function(v){const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set,old=this.value;s.call(this,v);if(this.value!==v){s.call(this,old);throw Error('Invalid native date/time value; use its ISO format');}this.dispatchEvent(new Event('input',{bubbles:true}));this.dispatchEvent(new Event('change',{bubbles:true}));}`,
           text,
         );
         return ` = ${JSON.stringify(text)}`;
       }
-      const p = await this.point(page, id, true);
+      const p = await this.point(page, t, true);
       await page.clickAt(p.x, p.y);
       // Comboboxes often move focus to their own overlay input on click; type there, not into the hidden original.
       const moved = await this.onNode<boolean>(
-        page,
-        id,
+        t,
         `function(){const e=this.nodeType===1?this:this.parentElement;let a=document.activeElement;while(a&&a.shadowRoot&&a.shadowRoot.activeElement)a=a.shadowRoot.activeElement;return !!a&&a!==e&&!e.contains(a)&&(['INPUT','TEXTAREA'].includes(a.tagName)||a.isContentEditable);}`,
       ).catch(() => false);
-      if (!moved) await page.cdp('DOM.focus', { backendNodeId: id }).catch(() => {});
+      if (!moved) await t.send('DOM.focus', { backendNodeId: t.node }).catch(() => {});
       const a = { key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 };
       await page.cdp('Input.dispatchKeyEvent', {
         type: 'rawKeyDown',
@@ -630,8 +742,7 @@ export class AxHelpers {
               return a ? (a.isContentEditable ? a.innerText : (a.value ?? '')) : '';
             })
           : this.onNode<string>(
-              page,
-              id,
+              t,
               `function(){const e=this.nodeType===1?this:this.parentElement;return e.isContentEditable?e.innerText:(e.value??'');}`,
             )
       ).catch(() => undefined);
@@ -647,4 +758,10 @@ export class AxHelpers {
       await page.cdp('Input.dispatchKeyEvent', { type: 'char', ...k, text, unmodifiedText: text });
     await page.cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
   }
+}
+
+/** A file input's name for its line: aria-label, name or id. */
+function fileName(f: Protocol.DOM.Node) {
+  const at = (k: string) => f.attributes?.find((_, i, a) => i % 2 === 1 && a[i - 1] === k);
+  return at('aria-label') ?? at('name') ?? at('id') ?? '';
 }

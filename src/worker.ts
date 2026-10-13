@@ -107,6 +107,7 @@ const bu =
         () => Reflect.get(realm, 'page') as Page,
         () => browser,
         (text) => (Reflect.get(realm, 'console') as Console).log(text),
+        config.ax,
       )
     : undefined;
 // The search endpoint under the cloud worker's names; transcripts restored from before search() used them.

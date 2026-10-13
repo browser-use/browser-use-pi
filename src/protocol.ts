@@ -24,8 +24,17 @@ export interface CellResult {
   /** Full output is written to the workspace when the model-facing output is truncated. */
   outputFile?: string;
 }
+/** Ultrafast experiments. Off by default, and off is today's behavior. */
+export interface AxOptions {
+  /**
+   * 'axtree': bu.state() prints every frame as one numbered tree, a tab per depth, and a later look at the same
+   * page only what changed. bu actions take those numbers and refuse one of an earlier page.
+   */
+  state?: 'axtree';
+}
 export interface WorkerConfig extends importPolicy {
   mode?: 'default' | 'ultrafast';
+  ax?: AxOptions;
   webSearch?: { url: string; token: string };
   sensitiveData?: import('./policy.js').SensitiveData;
   redact?: string[];
