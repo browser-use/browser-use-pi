@@ -23,6 +23,18 @@ after(async () => {
   if (workspace) await rm(workspace, { recursive: true, force: true });
 });
 
+test('the state prints up to 10,000 chars before it cuts lines', async () => {
+  const page = (n) =>
+    `await page.goto('data:text/html,<body>'); await page.evaluate((n) => { document.body.innerHTML = Array.from({length: n}, (_, i) => '<p><button>Button number ' + i + '</button></p>').join('') }, ${n}); await bu.state()`;
+  const whole = (await agent.execute(page(200))).text;
+  assert.doesNotMatch(whole, /lines cut here/);
+  assert.match(whole, /Button number 199/);
+  const cut = (await agent.execute(page(600))).text;
+  assert.match(cut, /lines cut here/);
+  assert.ok(cut.length < 12_000);
+  assert.match(cut, /Button number 599/);
+});
+
 test('the upload recipe prints only with a file line, and running it sets the bytes', async () => {
   const plain = (
     await agent.execute("await page.goto('data:text/html,<button>Go</button>'); await bu.state()")
