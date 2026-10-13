@@ -396,7 +396,8 @@ export class AxHelpers {
       });
     lines.unshift(...hidden);
     const header = `[state] ${info.title} | ${info.url}${settled.pending ? ` | loading: ${settled.pending}` : ''}${this.flushDialogs()}`;
-    const max = options.max ?? 3000;
+    // Under the 12,000-char default output cap, with room for the header and the action lines.
+    const max = options.max ?? 10_000;
     const fit = (from: string[], budget: number) => {
       let size = 0;
       const n = from.findIndex((l) => (size += l.length + 1) > budget);
