@@ -138,12 +138,54 @@ export class Page {
     }
     throw new Error(`Page condition exceeded ${timeoutMs} ms.`);
   }
+  /**
+   * Text actually shown, lowercased with whitespace collapsed. The AX tree keeps opacity:0 text (pre-rendered
+   * success banners), which agents then report as success; checkVisibility with checkOpacity drops it.
+   */
+  visibleText() {
+    return this.evaluate(() => {
+      const out: string[] = [];
+      const shown = new Map<Element, boolean>();
+      const roots: Node[] = [document];
+      for (let i = 0; i < roots.length; i++) {
+        const walk = document.createTreeWalker(
+          roots[i]!,
+          NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+        );
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          if (n.nodeType === Node.ELEMENT_NODE) {
+            const el = n as Element & { contentDocument?: Document | null };
+            if (el.shadowRoot) roots.push(el.shadowRoot);
+            if (el.contentDocument) roots.push(el.contentDocument); // same-origin iframe
+            continue;
+          }
+          let e = n.parentElement;
+          if (!e || !n.textContent?.trim()) continue;
+          // display:contents has no box, so checkVisibility is false; its text shows through the nearest boxed ancestor.
+          while (e.parentElement && getComputedStyle(e).display === 'contents') e = e.parentElement;
+          if (!shown.has(e))
+            shown.set(e, e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+          if (shown.get(e)) out.push(n.textContent);
+        }
+      }
+      return out.join(' ').replace(/\s+/g, ' ').toLowerCase();
+    });
+  }
+
+  /** The accessibility tree without text that is not shown: a hidden "submitted successfully" line is not an outcome. */
   async snapshot(): Promise<{ url: string; title: string; nodes: AXNode[] }> {
-    const { nodes } = await this.cdp('Accessibility.getFullAXTree');
+    const [{ nodes }, visible] = await Promise.all([
+      this.cdp('Accessibility.getFullAXTree'),
+      this.visibleText().catch(() => undefined),
+    ]);
+    const shown = (n: Protocol.Accessibility.AXNode) =>
+      n.role?.value !== 'StaticText' ||
+      visible === undefined ||
+      visible.includes(String(n.name?.value).replace(/\s+/g, ' ').trim().toLowerCase());
     return {
       ...(await this.info()),
       nodes: nodes
-        .filter((n) => !n.ignored && n.backendDOMNodeId)
+        .filter((n) => !n.ignored && n.backendDOMNodeId && shown(n))
         .map((n) => ({
           id: n.backendDOMNodeId!,
           role: String(n.role?.value ?? ''),

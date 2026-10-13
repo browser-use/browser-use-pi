@@ -238,40 +238,6 @@ export class AxHelpers {
     return this.dialogs.length ? `\n${this.dialogs.splice(0).join('\n')}` : '';
   }
 
-  /**
-   * Text actually shown, lowercased with whitespace collapsed. The AX tree keeps opacity:0 text (pre-rendered
-   * success banners), which agents then report as success; checkVisibility with checkOpacity drops it.
-   */
-  private visibleText(page = this.page()) {
-    return page.evaluate(() => {
-      const out: string[] = [];
-      const shown = new Map<Element, boolean>();
-      const roots: Node[] = [document];
-      for (let i = 0; i < roots.length; i++) {
-        const walk = document.createTreeWalker(
-          roots[i]!,
-          NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
-        );
-        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-          if (n.nodeType === Node.ELEMENT_NODE) {
-            const el = n as Element & { contentDocument?: Document | null };
-            if (el.shadowRoot) roots.push(el.shadowRoot);
-            if (el.contentDocument) roots.push(el.contentDocument); // same-origin iframe
-            continue;
-          }
-          let e = n.parentElement;
-          if (!e || !n.textContent?.trim()) continue;
-          // display:contents has no box, so checkVisibility is false; its text shows through the nearest boxed ancestor.
-          while (e.parentElement && getComputedStyle(e).display === 'contents') e = e.parentElement;
-          if (!shown.has(e))
-            shown.set(e, e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
-          if (shown.get(e)) out.push(n.textContent);
-        }
-      }
-      return out.join(' ').replace(/\s+/g, ' ').toLowerCase();
-    });
-  }
-
   /** AX trees of the main frame and of every same-process child frame (other frames fail and are skipped). */
   private async capture(page: Page) {
     for (let i = 0; ; i++) {
@@ -314,7 +280,7 @@ export class AxHelpers {
     const [frames, info, visible, files] = await Promise.all([
       this.capture(page),
       settled.probe ?? page.info(),
-      this.visibleText(page).catch(() => undefined),
+      page.visibleText().catch(() => undefined),
       settled.probe?.files === false ? [] : this.fileInputs(page).catch(() => []),
     ]);
     const previous = this.last;
