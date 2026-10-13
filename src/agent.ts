@@ -252,6 +252,8 @@ export async function runAgent(
         config.streamFn(selected, redact(request, config.redact ?? []), {
           ...settings,
           maxTokens: Math.min(selected.maxTokens, 32768, Math.floor(selected.contextWindow * 0.15)),
+          // After a low-effort answer was sent back, the rest of the run thinks at medium.
+          ...(gated ? { reasoning: 'medium' as const } : {}),
           ...(delivering() && keepTools ? { toolChoice: deliveryChoice } : {}),
         }),
       config.modelTimeoutMs ?? 300_000,

@@ -106,13 +106,17 @@ test('invalid structured output is rejected, then the model can repair it', asyn
     await s.close();
   }
 });
-test('at low effort an answer that reports unverified items is sent back once, then accepted', async () => {
+test('at low effort an answer that reports unverified items is sent back once at medium, then accepted', async () => {
   const gaveUp = 'I couldn’t verify the fifth player.';
   const low = await session(
     [
-      call('finish', { result: gaveUp }),
-      (context) => {
+      (_context, options) => {
+        assert.equal(options.reasoning, 'low');
+        return call('finish', { result: gaveUp });
+      },
+      (context, options) => {
         assert.match(context.messages.at(-1).content[0].text, /Result rejected once/);
+        assert.equal(options.reasoning, 'medium');
         return call('finish', { result: gaveUp });
       },
     ],
