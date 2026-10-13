@@ -101,6 +101,23 @@ test('invalid structured output is rejected, then the model can repair it', asyn
     await s.close();
   }
 });
+test('an answer that reports unverified items is sent back once, then accepted', async () => {
+  const gaveUp = 'I couldn’t verify the fifth player.';
+  const s = await session([
+    call('finish', { result: gaveUp }),
+    (context) => {
+      assert.match(context.messages.at(-1).content[0].text, /Result rejected once/);
+      return call('finish', { result: gaveUp });
+    },
+  ]);
+  try {
+    const result = await s.agent.run('Name five players.');
+    assert.equal(result.status, 'completed');
+    assert.equal(result.output, gaveUp);
+  } finally {
+    await s.close();
+  }
+});
 test('a completed result blocks later browser mutations in the same model batch', async () => {
   const s = await session([
     fauxAssistantMessage(

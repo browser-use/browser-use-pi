@@ -27,6 +27,9 @@ export const zeroUsage = (): Usage => ({
   totalTokens: 0,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 });
+/** A final answer that says requested items are missing or unverified. */
+const GAVE_UP =
+  /could ?n[o'’]t|can[’']?t|cannot|unable to|not (been )?verified|unverified|won[’']t guess/i;
 // Failures worth one more inference call. Anchored where a trailing access denial must not retry.
 const TRANSIENT_MODEL_ERRORS = [
   /^OpenAI API error \(5\d{2}\): /,
@@ -104,6 +107,7 @@ export async function runAgent(
   let providerRetries = 0;
   let retriedUsage = zeroUsage();
   let finalizing = false;
+  let gated = false;
   let compactionFailed = false;
   const warnings: string[] = [];
   const context = new RunContext(
@@ -168,6 +172,13 @@ export async function runAgent(
     signal?.throwIfAborted();
     const text = typeof output === 'string' ? output : JSON.stringify(output);
     if (text === undefined) throw new Error('The final result must be JSON serializable.');
+    // Low effort often stops with requested items unverified while time remains: send that back once.
+    if (!finalizing && !gated && GAVE_UP.test(text.slice(0, 3000))) {
+      gated = true;
+      throw new Error(
+        "Result rejected once: it reports requested items as missing or unverified, and time remains. Work on the missing items (another query, the site's own search or filters, another source), then finish again. If they truly cannot be found, finish with the same answer.",
+      );
+    }
     completion = { output, text };
     return {
       content: [{ type: 'text' as const, text: 'Result accepted.' }],
