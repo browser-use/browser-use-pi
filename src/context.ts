@@ -21,7 +21,7 @@ export function contextChars(messages: AgentMessage[]): number {
 }
 
 /** Pi keeps the prompt as leading system messages; budgets count it once through `system`. */
-export const conversation = (messages: AgentMessage[]) =>
+export const conversation = (messages: AgentMessage[]): AgentMessage[] =>
   messages.filter((m) => m.role !== 'system');
 
 /** A provider projection; the original transcript remains available for accounting and audit. */

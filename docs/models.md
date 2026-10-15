@@ -20,6 +20,8 @@ const agent = await BrowserUse.create({
 
 Reasoning levels depend on the model. Inspect `builtinModels()` or supply `models` for a new endpoint/catalog. Advanced callers can override `streamFn`.
 
+The built-in OpenRouter catalog is a snapshot bundled with Pi, not a live list. Updating Pi refreshes that snapshot; a model released afterward still needs a caller-supplied `models` collection until upstream includes it.
+
 **Opus 5 / OpenRouter:** Pi 0.85.1’s Messages route sends an unsupported mid-conversation effort update. The default SDK resolution uses OpenRouter’s `/api/v1` completions transport for this exact model. Caller-supplied `models` collections are left untouched. Remove this compatibility patch when Pi’s upstream route is fixed.
 
 Usage and costs come from the configured model catalog. They are estimates, not invoices. `maxCostUsd` is checked between turns and may overshoot by one response.
