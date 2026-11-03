@@ -1,0 +1,18 @@
+src/agent.ts
+  h_e7a2b198222b93 506,510-519,597
+src/types.ts
+  h_e7a2b198222b93 115
+test/agent.test.mjs
+  h_e7a2b198222b93 410-466,470,476,478-479,485-534
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "87956fb3a713aec3f20f9263391d75df9a1b2d43",
+  "prompts": {},
+  "humans": {
+    "h_e7a2b198222b93": {
+      "author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}
