@@ -503,17 +503,20 @@ export async function runAgent(
       );
       return { ...evidence, ...override };
     },
-    finishTurn: ({ message, context }): { action: 'end' } | undefined => {
+    finishTurn: ({ message, context, toolResults }): { action: 'end' } | undefined => {
       // Error and aborted responses are hard exits; the old shouldStopAfterTurn never saw them.
       if (message.stopReason === 'error' || message.stopReason === 'aborted') return undefined;
       if (completion || stopped) return { action: 'end' };
-      return checkBudgets(
-        context.messages,
-        agent.state.systemPrompt,
-        message.stopReason !== 'stop',
-      ) || finishRepairs > 0
-        ? { action: 'end' }
-        : undefined;
+      if (checkBudgets(context.messages, agent.state.systemPrompt, message.stopReason !== 'stop'))
+        return { action: 'end' };
+      if (
+        finishRepairs === 1 &&
+        toolResults.some((result) => result.isError && deliveryTools.includes(result.toolName))
+      ) {
+        finishRepairs++;
+        return undefined;
+      }
+      return finishRepairs > 0 ? { action: 'end' } : undefined;
     },
   });
   refreshToolBudget();
@@ -591,7 +594,7 @@ export async function runAgent(
           content: [
             {
               type: 'text',
-              text: 'The run ended without a validated delivery. Use finish_from_js for an existing result or finish for a concise answer. Preserve all verified records; report missing evidence honestly. Do not repeat browser actions. This is the single delivery repair turn.',
+              text: 'The run ended without a validated delivery. Use finish_from_js for an existing result or finish for a concise answer. Preserve all verified records; report missing evidence honestly. Do not repeat browser actions. This is the single delivery repair; one correction may follow a rejected delivery.',
             },
           ],
           timestamp: Date.now(),

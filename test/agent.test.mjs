@@ -407,21 +407,128 @@ test('missing-finish repair never resets exhausted step, cost, context or cancel
   }
 });
 
-test('repair is one turn even when it calls an invalid finish', async () => {
+test('a rejected delivery repair gets one correction without repeating work', async () => {
+  const schema = Type.Object({ answer: Type.String(), request: Type.String() });
+  const output = { answer: 'verified', request: 'fixture request' };
+  for (const [name, rejected, fauxOptions] of [
+    ['missing field', call('finish', { result: { answer: 'verified' } }), {}],
+    [
+      'OpenAI missing field',
+      call('finish', { result: { answer: 'verified' } }),
+      { api: 'openai-responses', provider: 'openai' },
+    ],
+  ]) {
+    let work = 0;
+    const s = await session(
+      [
+        call('record_work', {}),
+        fauxAssistantMessage('partial evidence'),
+        rejected,
+        (context) => {
+          assert.equal(context.messages.at(-1).isError, true, name);
+          return fauxAssistantMessage(
+            [fauxToolCall('record_work', {}), fauxToolCall('finish', { result: output })],
+            { stopReason: 'toolUse' },
+          );
+        },
+      ],
+      {
+        browser: { kind: 'pending' },
+        tools: [
+          {
+            name: 'record_work',
+            label: 'Record work',
+            description: 'Record one task action',
+            parameters: Type.Object({}),
+            execute: async () => {
+              work++;
+              return { content: [{ type: 'text', text: 'recorded' }], details: {} };
+            },
+          },
+        ],
+      },
+      fauxOptions,
+    );
+    try {
+      const result = await s.agent.run('Deliver', { schema, maxSteps: 5 });
+      assert.equal(result.status, 'completed', name);
+      assert.deepEqual(result.output, output, name);
+      assert.equal(result.finishRepairs, 2, name);
+      assert.equal(result.steps, 4, name);
+      assert.equal(s.faux.state.callCount, 4, name);
+      assert.equal(work, 1, name);
+    } finally {
+      await s.close();
+    }
+  }
+});
+
+test('repair stops after one rejected correction', async () => {
   const s = await session([
     fauxAssistantMessage('partial evidence'),
+    call('finish_from_js', { expression: 'undefined' }),
     call('finish_from_js', { expression: 'undefined' }),
     call('finish', { result: 'unreachable' }),
   ]);
   try {
     const result = await s.agent.run('Deliver');
     assert.equal(result.status, 'incomplete');
-    assert.equal(result.finishRepairs, 1);
+    assert.equal(result.finishRepairs, 2);
     assert.equal(result.text, 'partial evidence');
-    assert.equal(result.steps, 2);
-    assert.equal(s.faux.state.callCount, 2);
+    assert.equal(result.steps, 3);
+    assert.equal(s.faux.state.callCount, 3);
   } finally {
     await s.close();
+  }
+});
+
+test('a rejected repair preserves the remaining budgets', async () => {
+  for (const [name, expected, options] of [
+    ['steps', 'max_steps', { maxSteps: 2 }],
+    ['cost', 'cost_limit', { maxCostUsd: 0.01 }],
+    ['context', 'context_limit', { compaction: false, maxContextChars: 12000 }],
+    ['cancellation', 'cancelled', {}],
+  ]) {
+    const controller = new AbortController();
+    const schema = Type.Object({ answer: Type.String(), request: Type.String() });
+    if (name === 'context') schema.description = 'fixture '.repeat(750);
+    const s = await session(
+      [
+        fauxAssistantMessage('partial evidence'),
+        call('finish', { result: { answer: 'verified' } }),
+        call('finish', { result: { answer: 'unreachable', request: 'fixture request' } }),
+      ],
+      { browser: { kind: 'pending' } },
+    );
+    try {
+      const result = await s.agent.run('Deliver', {
+        ...options,
+        schema,
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (
+            name === 'cost' &&
+            event.type === 'message_end' &&
+            event.message.role === 'assistant' &&
+            event.message.content.some((part) => part.type === 'toolCall')
+          )
+            event.message.usage.cost.total = 1;
+          if (
+            name === 'cancellation' &&
+            event.type === 'tool_execution_end' &&
+            event.toolName === 'finish'
+          )
+            controller.abort();
+        },
+      });
+      assert.equal(result.status, expected, name + ' ' + JSON.stringify(result.context));
+      assert.equal(result.output, undefined, name);
+      assert.equal(result.finishRepairs, 1, name);
+      assert.equal(result.steps, 2, name);
+      assert.equal(s.faux.state.callCount, 2, name);
+    } finally {
+      await s.close();
+    }
   }
 });
 
