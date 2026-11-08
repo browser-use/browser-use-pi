@@ -18,6 +18,7 @@ export function parseOptions(value) {
     'evidence_format',
     'research_tools',
     'delivery_review',
+    'mode',
   ]);
   if (!value || Array.isArray(value) || typeof value !== 'object')
     throw new Error('options must be an object');
@@ -234,6 +235,7 @@ export async function main() {
       cellTimeoutMs: 120000,
       operationTimeoutMs: 20000,
       researchTools: options.research_tools ?? options.evidence_format === 'findings',
+      mode: options.mode,
       ...(options.delivery_review
         ? {
             validateResult: async () => {
