@@ -16,7 +16,7 @@ import { Type, type TSchema } from 'typebox';
 import { Check, Errors } from 'typebox/value';
 import { CellError, type BrowserRuntime } from './runtime.js';
 import { Observer } from './observer.js';
-import { RunContext, conversation, contextWindowError } from './context.js';
+import { RunContext, contextSettings, conversation, contextWindowError } from './context.js';
 import { deadlineStream } from './model-stream.js';
 import { researchTools } from './research-tools.js';
 import type {
@@ -114,6 +114,7 @@ export async function runAgent(
   }
   if (options.compaction !== undefined && typeof options.compaction !== 'boolean')
     throw new Error('compaction must be boolean.');
+  const settings = contextSettings(options.context, model);
   runtime.beginRun();
   const start = Date.now();
   let previousMessages = session?.messages.length ?? 0;
@@ -138,6 +139,7 @@ export async function runAgent(
     maxContextChars,
     options.compaction !== false,
     config.redact ?? [],
+    settings,
   );
   let completion: { output: unknown; text: string } | undefined;
   let stopped: StopReason | undefined;
@@ -382,6 +384,7 @@ export async function runAgent(
           throw new Error('Cost limit reached during context preparation.');
         }
       };
+      context.trim(messages, agent.state.systemPrompt);
       while (options.compaction !== false && context.baseFits(agent.state.systemPrompt)) {
         signal?.throwIfAborted();
         if (options.maxCostUsd !== undefined && usage().cost.total >= options.maxCostUsd) {
@@ -522,9 +525,14 @@ export async function runAgent(
   refreshToolBudget();
   // Pi prepends the prompt as a system message; this run's messages start after it and the history.
   previousMessages = agent.state.messages.length;
-  if (session)
+  if (session) {
     session.control.steer = (text) =>
       agent.steer({ role: 'user', content: text, timestamp: Date.now() });
+    session.control.compact = () => {
+      if (options.compaction === false) throw new Error('Compaction is disabled for this run.');
+      context.force = true;
+    };
+  }
   agent.subscribe((event) => {
     if (event.type === 'turn_start') steps++;
   });
