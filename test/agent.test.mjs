@@ -467,7 +467,13 @@ test('repair stops after one rejected correction', async () => {
   const s = await session([
     fauxAssistantMessage('partial evidence'),
     call('finish_from_js', { expression: 'undefined' }),
-    call('finish_from_js', { expression: 'undefined' }),
+    (context) => {
+      const feedback = context.messages.at(-1).content[0].text;
+      assert.match(feedback, /^Final delivery rejected: /);
+      assert.match(feedback, /Original result schema: /);
+      assert.match(feedback, /Rejected value or arguments: \{"expression":"undefined"\}/);
+      return call('finish_from_js', { expression: 'undefined' });
+    },
     call('finish', { result: 'unreachable' }),
   ]);
   try {
@@ -477,6 +483,32 @@ test('repair stops after one rejected correction', async () => {
     assert.equal(result.text, 'partial evidence');
     assert.equal(result.steps, 3);
     assert.equal(s.faux.state.callCount, 3);
+  } finally {
+    await s.close();
+  }
+});
+
+test('rejected finish feedback echoes arguments once, capped', async () => {
+  const schema = Type.Object({ answer: Type.String(), request: Type.String() });
+  const output = { answer: 'verified', request: 'fixture request' };
+  const s = await session(
+    [
+      call('finish', { result: { answer: 'x'.repeat(10_000) } }),
+      (context) => {
+        const feedback = context.messages.at(-1).content[0].text;
+        assert.equal(context.messages.at(-1).isError, true);
+        assert.doesNotMatch(feedback, /Received arguments/);
+        assert.ok(feedback.length < 4000, String(feedback.length));
+        return call('finish', { result: output });
+      },
+    ],
+    { browser: { kind: 'pending' } },
+  );
+  try {
+    const result = await s.agent.run('Deliver', { schema });
+    assert.equal(result.status, 'completed');
+    assert.deepEqual(result.output, output);
+    assert.equal(s.faux.state.callCount, 2);
   } finally {
     await s.close();
   }

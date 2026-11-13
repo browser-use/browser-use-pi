@@ -178,7 +178,7 @@ export async function runAgent(
   const rejectedDelivery = (reason: string, rejected: unknown) => {
     let value: string | undefined;
     try {
-      value = JSON.stringify(rejected);
+      value = JSON.stringify(rejected)?.slice(0, 2000);
     } catch {
       value = '[Non-JSON value; provide a JSON-serializable result.]';
     }
@@ -227,7 +227,12 @@ export async function runAgent(
           arguments: args as ToolCall['arguments'],
         });
       } catch (error) {
-        throw rejectedDelivery(error instanceof Error ? error.message : String(error), args);
+        // Pi appends the full arguments; rejectedDelivery already echoes them, capped.
+        const reason = (error instanceof Error ? error.message : String(error)).replace(
+          /\n\nReceived arguments:[\s\S]*$/,
+          '',
+        );
+        throw rejectedDelivery(reason, args);
       }
     },
     executionMode: 'sequential',
@@ -243,11 +248,20 @@ export async function runAgent(
     parameters: expressionParameters,
     executionMode: 'sequential',
     replay: 'never',
-    execute: async (_id, params: { expression: string }, signal) =>
-      acceptResult(
-        await runtime.readResult(params.expression, config.cellTimeoutMs ?? 30_000, signal),
-        signal,
-      ),
+    execute: async (_id, params: { expression: string }, signal) => {
+      let output;
+      try {
+        output = await runtime.readResult(
+          params.expression,
+          config.cellTimeoutMs ?? 30_000,
+          signal,
+        );
+      } catch (error) {
+        signal?.throwIfAborted();
+        throw rejectedDelivery(error instanceof Error ? error.message : String(error), params);
+      }
+      return acceptResult(output, signal);
+    },
   };
   // OpenAI restricts delivery turns with allowed_tools, so the tool list (part of the cached prompt prefix) stays.
   // Other providers on this api (xAI, gateways) reject allowed_tools; a baseUrl proxy for openai must pass it through.
