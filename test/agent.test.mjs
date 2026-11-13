@@ -497,6 +497,8 @@ test('rejected finish feedback echoes arguments once, capped', async () => {
       (context) => {
         const feedback = context.messages.at(-1).content[0].text;
         assert.equal(context.messages.at(-1).isError, true);
+        assert.equal(feedback.split('Rejected value or arguments:').length - 1, 1);
+        assert.match(feedback, /Rejected value or arguments: \{"result":\{"answer":"xxx/);
         assert.doesNotMatch(feedback, /Received arguments/);
         assert.ok(feedback.length < 4000, String(feedback.length));
         return call('finish', { result: output });

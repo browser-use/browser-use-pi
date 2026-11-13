@@ -122,7 +122,7 @@ export interface ContextMetrics {
 }
 export interface RunMetrics {
   context?: ContextMetrics;
-  /** This count records zero, one, or two delivery repair turns. */
+  /** Delivery repair turns taken within the original budgets: zero, one, or two. */
   finishRepairs: number;
   compactions?: number;
   providerRetries?: number;
