@@ -16,6 +16,33 @@ export type AXNode = {
   disabled?: boolean;
 };
 
+type Point = { x: number; y: number };
+const between = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
+/** A mouse move to a tab hidden mid-path is answered only after ~5 s (headless Chrome): press without waiting. */
+const MOVE_ACK_MS = 2000;
+
+/**
+ * 10-15 mouseMoved points along a jittered quadratic Bezier from `from` to `to`, eased in and out.
+ * The last point is exactly `to`; every point stays inside the `width` x `height` viewport.
+ */
+export function mousePath(from: Point, to: Point, width: number, height: number): Point[] {
+  const cx = (from.x + to.x) / 2 + between(-0.15, 0.15) * width;
+  const cy = (from.y + to.y) / 2 + between(-0.15, 0.15) * height;
+  const steps = Math.floor(between(10, 16));
+  const clamp = (v: number, max: number) => Math.min(Math.max(v, 0), max);
+  return Array.from({ length: steps }, (_, i) => {
+    if (i === steps - 1) return { ...to };
+    const s = (i + 1) / steps;
+    const t = s * s * (3 - 2 * s);
+    const at = (a: number, c: number, b: number) =>
+      (1 - t) ** 2 * a + 2 * (1 - t) * t * c + t * t * b + between(-1, 1);
+    return {
+      x: clamp(at(from.x, cx, to.x), width - 1),
+      y: clamp(at(from.y, cy, to.y), height - 1),
+    };
+  });
+}
+
 const contextLost =
   /Execution context was destroyed|Cannot find context|Cannot find default execution context/;
 
@@ -44,6 +71,9 @@ export class Page {
     public targetId: string,
     public sessionId: string,
   ) {}
+
+  /** Where the last mouse event on this tab put the pointer, raw page.cdp calls included. */
+  private pointer: Point | undefined;
 
   private initialize: (() => Promise<Page>) | undefined;
   private initializing: Promise<void> | undefined;
@@ -88,6 +118,10 @@ export class Page {
     params?: import('devtools-protocol/types/protocol-mapping.js').ProtocolMapping.Commands[M]['paramsType'][0],
   ) {
     await this.ready();
+    if (method === 'Input.dispatchMouseEvent') {
+      const { x, y } = params as Point;
+      this.pointer = { x, y };
+    }
     return this.connection.send(method, params, this.sessionId);
   }
   async goto(url: string) {
@@ -157,21 +191,43 @@ export class Page {
   }
   async clickAt(x: number, y: number) {
     if (![x, y].every(Number.isFinite)) throw new Error('Coordinates must be finite.');
-    await this.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
-    await this.cdp('Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      x,
-      y,
-      button: 'left',
-      clickCount: 1,
-    });
-    await this.cdp('Input.dispatchMouseEvent', {
-      type: 'mouseReleased',
-      x,
-      y,
-      button: 'left',
-      clickCount: 1,
-    });
+    await this.moveMouse(x, y);
+    await delay(between(20, 60));
+    const press = { x, y, button: 'left', clickCount: 1 } as const;
+    await this.cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...press });
+    await delay(between(20, 50));
+    await this.cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...press });
+  }
+  /**
+   * Moves the pointer to (x, y) along a curved path from where it last was, as a hand does.
+   * Akamai validates its _abck session only after real mouse travel; a click that teleports onto its
+   * target does not count (cloud A/B: _abck ~0~ in 16/16 sessions with a path vs ~1/46 without).
+   */
+  private async moveMouse(x: number, y: number) {
+    // Raw evaluate: page.evaluate's userGesture would grant the page a user activation.
+    const view = await this.cdp('Runtime.evaluate', {
+      expression: '[document.visibilityState, innerWidth, innerHeight]',
+      returnByValue: true,
+    }).then(
+      ({ result }) => result.value as [string, number, number] | undefined,
+      () => undefined,
+    );
+    // A hidden tab answers each mouseMoved only after ~5 s (headless): one move, as before.
+    if (view?.[0] !== 'visible') {
+      await this.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      return;
+    }
+    const [, width, height] = view;
+    const from = this.pointer ?? { x: between(0.2, 0.8) * width, y: between(0.2, 0.8) * height };
+    // Sent without awaiting each answer, so the cloud round trip does not set the pace.
+    const moves: Promise<unknown>[] = [];
+    for (const [i, p] of mousePath(from, { x, y }, width, height).entries()) {
+      if (i) await delay(between(10, 25));
+      moves.push(this.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...p }));
+    }
+    const answered = Promise.all(moves);
+    answered.catch(() => {}); // a move still pending after MOVE_ACK_MS must not reject unhandled
+    await Promise.race([answered, delay(MOVE_ACK_MS, undefined, { ref: false })]);
   }
   async screenshot(options: { quality?: number } = {}) {
     // The page's own devicePixelRatio (emulation changes it) makes image pixels page.clickAt coordinates.
