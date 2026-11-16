@@ -8,7 +8,7 @@ The `javascript` tool is a persistent Node REPL. Top-level variables, functions 
 | `page.snapshot()`                               | AX nodes with backend IDs, roles, names, values and states |
 | `page.evaluate(fn, argument)`                   | Run page code; return JSON                                 |
 | `page.waitFor(fn, argument, {timeoutMs})`       | Wait for an observed condition                             |
-| `page.clickAt(x, y)`                            | Real mouse input in viewport coordinates                   |
+| `page.clickAt(x, y)`                            | Curved mouse travel, then a real click (viewport coords)   |
 | `page.screenshot()`                             | Capture a native image for the model                       |
 | `page.cdp(method, params)`                      | Any typed tab CDP command                                  |
 | `tabs.open(url)`, `tabs.list()`, `tabs.get(id)` | Open, list and attach tabs                                 |
