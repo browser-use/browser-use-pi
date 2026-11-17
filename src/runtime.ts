@@ -159,8 +159,16 @@ export class BrowserRuntime {
       if (message.type === 'partial' && this.runId && message.runId === this.runId)
         this.partial = { path: message.path, value: JSON.parse(message.valueJson) };
       if (message.type === 'action') this.onAction?.(message.action);
-      if (message.type === 'typed' && message.runId === this.runId && this.typed.length < 200)
-        this.typed.push(message.text);
+      // Python RunStats.typed: stripped, once each, MAX_URLS (200) at most.
+      const text = message.type === 'typed' ? message.text.trim() : '';
+      if (
+        text &&
+        message.type === 'typed' &&
+        message.runId === this.runId &&
+        this.typed.length < 200 &&
+        !this.typed.includes(text)
+      )
+        this.typed.push(text);
       if (message.type === 'feedback') {
         const text =
           this.onFeedback?.(message.message, message.category, this.typed) ?? FEEDBACK_OFF;

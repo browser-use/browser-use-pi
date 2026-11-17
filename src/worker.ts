@@ -425,23 +425,39 @@ Object.assign(realm, {
 });
 // Text the cells type, for the parent to scrub from telemetry (never sent): Python stats.typed and stats.keys.
 let keys = '';
+/** Characters of keys an insertText put there: the keys typed after it are also a text of their own. */
+let inserted = 0;
 const typed = (text: string) =>
   send({ type: 'typed', ...(runId ? { runId } : {}), text: text.slice(0, 65_536) });
 function flushKeys() {
   if (keys) typed(keys);
+  if (inserted && keys.length > inserted) typed(keys.slice(inserted));
   keys = '';
+  inserted = 0;
 }
 function noteTyping(method: string, raw: unknown) {
-  const params = raw as { type?: string; text?: unknown };
+  const params = raw as { type?: string; text?: unknown; key?: unknown; modifiers?: unknown };
+  const printable = (s: unknown): s is string =>
+    typeof s === 'string' && [...s].length === 1 && s >= ' ';
   if (method === 'Input.insertText' && typeof params?.text === 'string' && params.text) {
+    // Alone, and as the start of a run: ax.type inserts all but the last character, then sends it as a key.
     flushKeys();
     typed(params.text);
+    keys = params.text.slice(-65_536);
+    inserted = keys.length;
   } else if (method === 'Input.dispatchKeyEvent' && params?.type !== 'keyUp') {
-    const text = typeof params?.text === 'string' ? params.text : '';
-    // A printable key joins the run; Enter, Tab or another named key ends it ('q' then Enter submits q).
-    if ([...text].length === 1 && text >= ' ') keys = (keys + text).slice(-65_536);
-    else if (params?.type !== 'char') flushKeys();
-  }
+    const shortcut = typeof params?.modifiers === 'number' && (params.modifiers & 7) !== 0;
+    // A printable key joins the run; Enter, Tab, a shortcut or another named key ends it ('q' then Enter submits q).
+    if (!shortcut && printable(params?.text)) {
+      const next = keys + params.text;
+      if (next.length > 65_536) inserted = 0;
+      keys = next.slice(-65_536);
+    }
+    // page.pressKey('q'): keyDown without text, then char 'q'.
+    else if (!shortcut && !params?.text && printable(params?.key) && params?.type !== 'char')
+      return;
+    else flushKeys();
+  } else if (method === 'Input.dispatchMouseEvent' && params?.type === 'mousePressed') flushKeys();
 }
 function observe() {
   browser.observeCommand = (method, raw, sessionId) => {
