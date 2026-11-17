@@ -19,15 +19,18 @@ export const VERSION: string = (() => {
   }
 })();
 
-const on = (name: string) => ['1', 'true', 'yes'].includes(process.env[name]?.toLowerCase() ?? '');
+/** Python config.py: a flag is on when its value starts with t, y or 1 (true, yes, 1, True). */
+const on = (name: string) =>
+  ['t', 'y', '1'].includes((process.env[name] ?? '').trim().toLowerCase().slice(0, 1));
 /** BROWSER_USE_OFFLINE=1: nothing at all is sent, also feedback a developer sends. Node tests send nothing either. */
 const offline = () => on('BROWSER_USE_OFFLINE') || !!process.env.NODE_TEST_CONTEXT;
 /** Usage stats off: telemetry: false, DO_NOT_TRACK=1 or ANONYMIZED_TELEMETRY=false (and offline). */
 export function telemetryOff(enabled: boolean | undefined) {
   return (
     enabled === false ||
-    process.env.DO_NOT_TRACK === '1' ||
-    ['false', '0'].includes(process.env.ANONYMIZED_TELEMETRY?.toLowerCase() ?? '') ||
+    on('DO_NOT_TRACK') ||
+    // Python config.py: set, telemetry stays on only for a value starting with t, y or 1 (false, no, off, 0 turn it off).
+    (process.env.ANONYMIZED_TELEMETRY !== undefined && !on('ANONYMIZED_TELEMETRY')) ||
     offline()
   );
 }
@@ -80,10 +83,7 @@ const MAX_GOTCHAS = 5;
 const MAX_MESSAGE = 2000;
 export const MAX_REPORTS = 3;
 export const CATEGORIES = ['bug', 'docs', 'missing', 'other'] as const;
-const isInternal = () =>
-  ['t', 'y', '1'].includes(
-    (process.env.BROWSER_USE_TELEMETRY_INTERNAL ?? '').trim().toLowerCase().slice(0, 1),
-  );
+const isInternal = () => on('BROWSER_USE_TELEMETRY_INTERNAL');
 
 /** library_judgement (judgement-event-spec.md), one per judged run. false when nothing was sent. */
 export function sendJudgement(
@@ -95,29 +95,42 @@ export function sendJudgement(
   const withheld = on('BROWSER_USE_ZDR');
   const clean = (text: unknown) => (withheld ? null : scrub(text, MAX_TEXT, context));
   const { judgement } = run;
-  post(LIBRARY_TOKEN, 'library_judgement', {
-    surface: 'js',
-    judge_source: 'judge',
-    version: VERSION,
-    run_id: run.runId || null,
-    model: run.model ? modelId(run.model) : null,
-    success: judgement.success,
-    failure_reason: judgement.failureReason ? clean(judgement.failureReason) : null,
-    description: clean(judgement.description) ?? '',
-    prompt_injection_detected: judgement.promptInjectionDetected,
-    bot_block_or_captcha_detected: judgement.botBlockOrCaptchaDetected,
-    gotchas: withheld
-      ? []
-      : judgement.gotchas
-          .slice(0, MAX_GOTCHAS)
-          .map(clean)
-          .filter((g): g is string => !!g),
-    hosts: [],
-    cost_usd: run.costUsd,
-    texts_withheld: withheld,
-    schema_version: 1,
-  });
-  return true;
+  return guarded(() =>
+    post(LIBRARY_TOKEN, 'library_judgement', {
+      surface: 'js',
+      judge_source: 'judge',
+      version: VERSION,
+      run_id: run.runId || null,
+      model: run.model ? modelId(run.model) : null,
+      success: judgement.success,
+      failure_reason: judgement.failureReason ? clean(judgement.failureReason) : null,
+      description: clean(judgement.description) ?? '',
+      prompt_injection_detected: judgement.promptInjectionDetected,
+      bot_block_or_captcha_detected: judgement.botBlockOrCaptchaDetected,
+      gotchas: withheld
+        ? []
+        : judgement.gotchas
+            .slice(0, MAX_GOTCHAS)
+            .map(clean)
+            .filter((g): g is string => !!g),
+      hosts: [],
+      cost_usd: run.costUsd,
+      texts_withheld: withheld,
+      // Not in the spec's table, but Python (LibraryJudgementEvent) and browser-harness send it: our evals filter on it.
+      is_internal: isInternal(),
+      schema_version: 1,
+    }),
+  );
+}
+
+/** Telemetry never breaks a run (Python: telemetry failed, logged at debug): a scrub that throws sends nothing. */
+function guarded(send: () => void): boolean {
+  try {
+    send();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function sendFeedback(
@@ -133,14 +146,11 @@ function sendFeedback(
     message: scrub(message, MAX_MESSAGE, context) ?? '',
     category: (CATEGORIES as readonly unknown[]).includes(category) ? category : 'other',
     is_internal: isInternal(),
-    ...(source === 'js-agent'
-      ? {
-          model: run.model ? modelId(run.model) : null,
-          run_id: run.runId ?? null,
-          step: run.step ?? null,
-          last_error_type: run.lastErrorType ?? null,
-        }
-      : {}),
+    // Python FeedbackEvent sends these as null outside the agent: the same keys from every source.
+    model: run.model ? modelId(run.model) : null,
+    run_id: run.runId || null,
+    step: run.step ?? null,
+    last_error_type: run.lastErrorType ?? null,
   });
 }
 
@@ -153,8 +163,7 @@ function sendFeedback(
 export function feedback(message: string, category: string = 'bug'): boolean {
   const text = typeof message === 'string' ? message.trim() : '';
   if (!text || offline() || process.env.BU_MODEL_CODE) return false;
-  sendFeedback('js', text, category, {});
-  return true;
+  return guarded(() => sendFeedback('js', text, category, {}));
 }
 
 export const FEEDBACK_SENT = 'Reported to the Browser Use team. Thanks; carry on.';
@@ -181,8 +190,13 @@ export class RunReports {
     if (telemetryOff(this.enabled)) return FEEDBACK_OFF;
     if (this.sent >= MAX_REPORTS)
       return `Already reported ${MAX_REPORTS} issues this run: nothing more was sent.`;
+    if (
+      !guarded(() =>
+        sendFeedback('js-agent', text, category, context, { ...this.run, ...progress }),
+      )
+    )
+      return 'The report could not be prepared: nothing was sent.';
     this.sent++;
-    sendFeedback('js-agent', text, category, context, { ...this.run, ...progress });
     return FEEDBACK_SENT;
   }
 }

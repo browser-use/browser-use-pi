@@ -143,6 +143,7 @@ test('library_judgement: spec fields, scrubbed and capped texts, library project
     'failure_reason',
     'gotchas',
     'hosts',
+    'is_internal',
     'judge_source',
     'model',
     'prompt_injection_detected',
@@ -166,6 +167,7 @@ test('library_judgement: spec fields, scrubbed and capped texts, library project
   assert.equal(p.cost_usd, 0.0123);
   assert.equal(p.texts_withheld, false);
   assert.equal(p.schema_version, 1);
+  assert.equal(p.is_internal, false);
   assert.equal(p.$process_person_profile, false);
   assert.match(p.description, /<task>/);
   assert.match(p.failure_reason, /<email>/);
@@ -179,22 +181,32 @@ test('library_judgement: spec fields, scrubbed and capped texts, library project
 test('library_judgement: BROWSER_USE_ZDR=1 sends booleans only; every off switch sends nothing', (t) => {
   const requests = sandbox(t);
   const run = { runId: 'r', model: 'm', judgement, costUsd: null };
-  process.env.BROWSER_USE_ZDR = '1';
-  sendJudgement(undefined, run, context);
-  const p = requests.pop().properties;
-  assert.equal(p.texts_withheld, true);
-  assert.equal(p.failure_reason, null);
-  assert.equal(p.description, '');
-  assert.deepEqual(p.gotchas, []);
-  assert.equal(p.success, false);
-  assert.equal(p.bot_block_or_captcha_detected, true);
+  // Python config.py reads a flag as on when it starts with t, y or 1.
+  for (const value of ['1', 'true', 'True', ' yes']) {
+    process.env.BROWSER_USE_ZDR = value;
+    sendJudgement(undefined, run, context);
+    const p = requests.pop().properties;
+    assert.equal(p.texts_withheld, true, value);
+    assert.equal(p.failure_reason, null);
+    assert.equal(p.description, '');
+    assert.deepEqual(p.gotchas, []);
+    assert.equal(p.success, false);
+    assert.equal(p.bot_block_or_captcha_detected, true);
+  }
   delete process.env.BROWSER_USE_ZDR;
 
   assert.equal(sendJudgement(false, run, context), false);
   for (const [name, value] of [
     ['DO_NOT_TRACK', '1'],
+    ['DO_NOT_TRACK', 'true'],
     ['ANONYMIZED_TELEMETRY', 'false'],
+    ['ANONYMIZED_TELEMETRY', 'False'],
+    ['ANONYMIZED_TELEMETRY', 'no'],
+    ['ANONYMIZED_TELEMETRY', 'off'],
+    ['ANONYMIZED_TELEMETRY', ''],
     ['BROWSER_USE_OFFLINE', '1'],
+    ['BROWSER_USE_OFFLINE', 'true'],
+    ['BROWSER_USE_OFFLINE', 'yes'],
     ['NODE_TEST_CONTEXT', 'child'],
   ]) {
     process.env[name] = value;
@@ -223,6 +235,10 @@ test('feedback(): the developer asked, so it sends with telemetry off; never off
     message: 'page.typeText drops emoji, key <credential>',
     category: 'other',
     is_internal: true,
+    model: null,
+    run_id: null,
+    step: null,
+    last_error_type: null,
   });
   assert.equal(feedback('   '), false);
   process.env.BROWSER_USE_OFFLINE = '1';
@@ -312,12 +328,33 @@ test('worker: reportIssue() asks the parent, sees typed text, runs as model code
   assert.match(cell.text, /answered answered 1/);
   assert.match(cell.text, /needs text/);
   assert.deepEqual(calls, [
-    { message: 'it broke', category: 'docs', typed: ['hunter2pass', 'abcd'] },
-    { message: 'again', category: 'bug', typed: ['hunter2pass', 'abcd'] },
+    { message: 'it broke', category: 'docs', typed: ['hunter2pass', 'hunter2passabcd', 'abcd'] },
+    { message: 'again', category: 'bug', typed: ['hunter2pass', 'hunter2passabcd', 'abcd'] },
   ]);
-  assert.deepEqual(runtime.typed, ['hunter2pass', 'abcd']);
+  assert.deepEqual(runtime.typed, ['hunter2pass', 'hunter2passabcd', 'abcd']);
   runtime.beginRun();
   assert.deepEqual(runtime.typed, []);
+
+  // The helpers' own sequences: ax.type inserts all but the last character, then sends it as a keyDown with text;
+  // page.pressKey sends keyDown without text, then char. Each is one typed text; a shortcut or a click ends a run.
+  await runtime.execute(
+    [
+      'const o = (m, p) => browser.observeCommand(m, p);',
+      "o('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'a', modifiers: 2, commands: ['selectAll']});",
+      "o('Input.dispatchKeyEvent', {type: 'keyUp', key: 'a', modifiers: 2});",
+      "o('Input.insertText', {text: 'swordfish9'}); o('Input.dispatchKeyEvent', {type: 'keyDown', key: 'x', text: 'x'});",
+      "o('Input.dispatchKeyEvent', {type: 'keyUp', key: 'x'});",
+      "o('Input.dispatchMouseEvent', {type: 'mousePressed', x: 1, y: 1});",
+      "for (const k of 'qwer') { o('Input.dispatchKeyEvent', {type: 'keyDown', key: k}); o('Input.dispatchKeyEvent', {type: 'char', key: k, text: k}); o('Input.dispatchKeyEvent', {type: 'keyUp', key: k}); }",
+      "o('Input.dispatchKeyEvent', {type: 'keyDown', key: 'c', text: 'c', modifiers: 2});",
+      "o('Input.insertText', {text: 'swordfish9'});",
+    ].join('\n'),
+  );
+  assert.deepEqual(runtime.typed, ['swordfish9', 'swordfish9x', 'x', 'qwer']);
+  assert.doesNotMatch(
+    scrub('Typing swordfish9x then qwer into search failed', 300, { typed: runtime.typed }),
+    /swordfish|qwer/,
+  );
 });
 
 test('a judged run sends bu_pi_run, its reports and library_judgement, with no task or typed text', async (t) => {
