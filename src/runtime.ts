@@ -4,7 +4,14 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { CDP } from './cdp.js';
 import { execFile, fork, type ChildProcess } from 'node:child_process';
-import type { BrowserAction, CellResult, WorkerConfig, WorkerResponse } from './protocol.js';
+import type {
+  BrowserAction,
+  CellResult,
+  WorkerConfig,
+  WorkerRequest,
+  WorkerResponse,
+} from './protocol.js';
+import { FEEDBACK_OFF } from './telemetry.js';
 import { positiveInteger, DEFAULT_CELL_TIMEOUT_MS } from './protocol.js';
 
 /** Bun hosts use the same V8 worker as Node hosts, including its cancellation boundary. */
@@ -47,9 +54,14 @@ export class BrowserRuntime {
   onAction: ((event: BrowserAction) => void) | undefined;
   private runId: string | undefined;
   partial: { path: string; value: unknown } | undefined;
+  /** Text this run's cells typed: only to scrub it from telemetry, never sent. */
+  typed: string[] = [];
+  /** reportIssue() from a cell -> the answer the cell gets (BrowserUse sends it as library_feedback). */
+  onFeedback: ((message: string, category: string, typed: readonly string[]) => string) | undefined;
   beginRun() {
     this.runId = randomUUID();
     this.partial = undefined;
+    this.typed = [];
   }
   /** The tab the agent last worked in: resumed next session, kept by keepTabs 'current'. */
   get currentTarget() {
@@ -136,7 +148,9 @@ export class BrowserRuntime {
     const worker = fork(new URL('./worker.js', import.meta.url), [], {
       execPath,
       execArgv: ['--max-old-space-size=256'], // Never inherit host loaders/preloads/inspectors.
-      env: {}, // Provider keys stay in the agent process; this is not an OS sandbox.
+      // Provider keys stay in the agent process; this is not an OS sandbox. BU_MODEL_CODE: the model's code reports
+      // with reportIssue(), not the developer's feedback() (Python feedback.py).
+      env: { BU_MODEL_CODE: '1' },
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
       serialization: 'json', // Node and Bun use different advanced IPC formats.
     });
@@ -145,6 +159,16 @@ export class BrowserRuntime {
       if (message.type === 'partial' && this.runId && message.runId === this.runId)
         this.partial = { path: message.path, value: JSON.parse(message.valueJson) };
       if (message.type === 'action') this.onAction?.(message.action);
+      if (message.type === 'typed' && message.runId === this.runId && this.typed.length < 200)
+        this.typed.push(message.text);
+      if (message.type === 'feedback') {
+        const text =
+          this.onFeedback?.(message.message, message.category, this.typed) ?? FEEDBACK_OFF;
+        worker.send(
+          { type: 'feedbackReply', id: message.id, text } satisfies WorkerRequest,
+          () => {},
+        );
+      }
       if (message.type === 'owned') this.owned.add(message.targetId);
       // A switched browser survives a worker restart.
       if (message.type === 'endpoint') this.config.endpoint = message.endpoint;
@@ -193,7 +217,8 @@ export class BrowserRuntime {
       };
       const message = (value: WorkerResponse) => {
         // Side messages a cell sends while running; only its result or error ends it.
-        if (!['owned', 'action', 'partial', 'endpoint'].includes(value.type)) finish(value);
+        if (!['owned', 'action', 'partial', 'endpoint', 'feedback', 'typed'].includes(value.type))
+          finish(value);
       };
       const abort = () =>
         finish(

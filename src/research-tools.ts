@@ -62,6 +62,7 @@ export function researchTools(
           LANG: 'en_US.UTF-8',
           HOME: workspace,
           TMPDIR: workspace,
+          BU_MODEL_CODE: '1',
           ...shellEnv,
         },
       }),
