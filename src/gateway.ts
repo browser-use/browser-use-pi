@@ -1,5 +1,6 @@
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import { createAssistantMessageEventStream, type Api, type Model } from '@earendil-works/pi-ai';
+import { noteZdr } from './telemetry.js';
 
 /** Python browser_use/llm: the Browser Use gateway, OpenAI Responses, one Browser Use API key for model and browser. */
 export const GATEWAY_URL = 'https://api.browser-use.com/api/v4/llm/v1';
@@ -86,6 +87,7 @@ export async function gatewayPreflight(
   } catch (error) {
     return `The Browser Use gateway at ${baseUrl} is not reachable: ${error instanceof Error ? error.message : String(error)}`;
   }
+  noteZdr(response.headers); // a ZDR project gets 403 project_policy here, with the header
   const body = (await response.json().catch(() => ({}))) as {
     data?: { id?: unknown }[];
     error?: { code?: string; message?: string };

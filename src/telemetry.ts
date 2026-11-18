@@ -85,6 +85,14 @@ export const MAX_REPORTS = 3;
 export const CATEGORIES = ['bug', 'docs', 'missing', 'other'] as const;
 const isInternal = () => on('BROWSER_USE_TELEMETRY_INTERNAL');
 
+/** Browser Use Cloud's answer for the API key's project (browser-use/cloud#8505), also on error replies. */
+export const ZDR_HEADER = 'X-Browser-Use-Zero-Data-Retention';
+let cloudZdr = false;
+/** Once a reply says true, judgement texts are withheld for the process; missing or false is unknown. */
+export function noteZdr(headers: Headers | undefined) {
+  if (headers?.get(ZDR_HEADER)?.trim().toLowerCase() === 'true') cloudZdr = true;
+}
+
 /** library_judgement (judgement-event-spec.md), one per judged run. false when nothing was sent. */
 export function sendJudgement(
   enabled: boolean | undefined,
@@ -92,7 +100,7 @@ export function sendJudgement(
   context: ScrubContext,
 ): boolean {
   if (telemetryOff(enabled)) return false;
-  const withheld = on('BROWSER_USE_ZDR');
+  const withheld = cloudZdr || on('BROWSER_USE_ZDR');
   const clean = (text: unknown) => (withheld ? null : scrub(text, MAX_TEXT, context));
   const { judgement } = run;
   return guarded(() =>
