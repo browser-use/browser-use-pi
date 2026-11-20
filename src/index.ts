@@ -8,7 +8,8 @@ import type { AgentMessage, StreamFn } from '@earendil-works/pi-agent-core';
 import type { Api, Model, Usage } from '@earendil-works/pi-ai';
 import { Type, type Static, type TSchema } from 'typebox';
 import { navigationPolicy, validateSensitiveData } from './policy.js';
-import { telemetry } from './telemetry.js';
+import { RunReports, sendJudgement, telemetry } from './telemetry.js';
+import type { ScrubContext } from './scrub.js';
 import { launchesBrowser, openBrowser, validCdpUrl } from './browser.js';
 import {
   GATEWAY_PROVIDER,
@@ -49,6 +50,7 @@ export type {
   ContextSettings,
 } from './types.js';
 export { Browser } from './browser.js';
+export { feedback } from './telemetry.js';
 export type {
   BrowserOptions,
   CloudBrowserOptions,
@@ -64,6 +66,14 @@ export { builtinModels } from '@earendil-works/pi-ai/providers/all';
 /** One browser, workspace and JavaScript namespace. run() resets context; followUp() retains it. */
 export class BrowserUse {
   private readonly reportRun: ReturnType<typeof telemetry>;
+  private readonly reports: RunReports;
+  /** The conversation's tasks since run(): scrubbed from what telemetry sends. */
+  private tasks: string[] = [];
+  /** This run's model turns and its last failed cell's error class, for reportIssue(). */
+  private progress: { step: number; lastErrorType: string | null } = {
+    step: 0,
+    lastErrorType: null,
+  };
   private active = false;
   private closed = false;
   private controller: AbortController | undefined;
@@ -87,6 +97,21 @@ export class BrowserUse {
     readonly workspace: string,
   ) {
     this.reportRun = telemetry(config.telemetry, config.browser);
+    this.reports = new RunReports(config.telemetry);
+    this.runtime.onFeedback = (message, category, typed) =>
+      this.reports.report(message, category, this.scrubContext(typed), this.progress);
+  }
+
+  /** What telemetry text never carries: the tasks, the typed text and the secrets (names kept). */
+  private scrubContext(typed: readonly string[]): ScrubContext {
+    const named = Object.entries(this.config.sensitiveData ?? {}).map(
+      ([name, secret]) => [secret.value, name] as const,
+    );
+    return {
+      tasks: this.tasks,
+      typed,
+      secrets: [...named, ...(this.config.redact ?? []).map((value) => [value] as const)],
+    };
   }
 
   static async create(options: BrowserUseOptions): Promise<BrowserUse> {
@@ -318,7 +343,10 @@ export class BrowserUse {
     if (!task.trim()) throw new Error('Provide a nonempty task.');
     this.active = true;
     if (!followUp) this.messages = [];
+    this.tasks = followUp ? [...this.tasks, task] : [task];
     this.runId = randomUUID();
+    this.progress = { step: 0, lastErrorType: null };
+    this.reports.start(this.runId, this.config.model);
     this.controller = new AbortController();
     this.control = new RunControl((paused) => this.emit({ type: paused ? 'paused' : 'resumed' }));
     this.activeRun = this.performRun(task, options, followUp);
@@ -442,6 +470,9 @@ export class BrowserUse {
           ...options,
           signal,
           onEvent: async (event, eventSignal) => {
+            if (event.type === 'turn_start') this.progress.step++;
+            if (event.type === 'tool_execution_end' && event.isError)
+              this.progress.lastErrorType = errorType(event.result);
             await record({ type: 'agent_event', event });
             await options.onEvent?.(event, eventSignal);
           },
@@ -477,7 +508,8 @@ export class BrowserUse {
           },
         },
       );
-      const judgeWarning = await this.judge(task, result, signal);
+      const judged = await this.judge(task, result, signal);
+      const judgeWarning = judged?.warning;
       this.runs++;
       for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens'] as const)
         this.totalUsage[key] += result.usage[key];
@@ -533,6 +565,17 @@ export class BrowserUse {
       if (journalFailure && !delivered.warnings?.includes(journalFailure))
         delivered.warnings = [...(delivered.warnings ?? []), journalFailure];
       this.reportRun(delivered);
+      if (result.judgement)
+        sendJudgement(
+          this.config.telemetry,
+          {
+            runId: this.runId,
+            model: this.config.model,
+            judgement: result.judgement,
+            costUsd: judged?.costUsd ?? null,
+          },
+          this.scrubContext(this.runtime.typed),
+        );
       return redact(delivered, this.config.redact ?? []);
     } finally {
       this.runtime.onAction = undefined;
@@ -668,9 +711,14 @@ export class BrowserUse {
         result.usage.cost[key] += usage.cost[key];
     }
     if (judged.judgement) result.judgement = judged.judgement;
-    return judged.error
-      ? `The judge failed (${judged.error}); result.judgement is unset.`
-      : undefined;
+    return {
+      warning: judged.error
+        ? `The judge failed (${judged.error}); result.judgement is unset.`
+        : undefined,
+      costUsd: judged.usage.length
+        ? judged.usage.reduce((sum, usage) => sum + usage.cost.total, 0)
+        : null,
+    };
   }
 
   /** Direct browser code. Use the same page and variables as the agent. */
@@ -760,3 +808,26 @@ export { exportRecording, type VideoOptions } from './video.js';
 export type { RecordingOptions } from './recording.js';
 
 export type { DomainOptions, SensitiveData } from './policy.js';
+
+/** Error classes JavaScript and CDP define: the model's code can name its own, and a name is text it chose. */
+const ERROR_TYPES = new Set([
+  'Error',
+  'TypeError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'EvalError',
+  'URIError',
+  'AggregateError',
+  'DOMException',
+  'AbortError',
+  'TimeoutError',
+  'CellError',
+]);
+/** The class of a failed cell's error ('TypeError: x is not a function' -> TypeError), never its message. */
+function errorType(result: unknown): string {
+  const content = (result as { content?: { type: string; text?: string }[] })?.content;
+  const text = Array.isArray(content) ? content.find((c) => c.type === 'text')?.text : undefined;
+  const name = /\b([A-Z][A-Za-z]{0,40}(?:Error|Exception))\b/.exec(text ?? '')?.[1];
+  return name && ERROR_TYPES.has(name) ? name : 'Error';
+}

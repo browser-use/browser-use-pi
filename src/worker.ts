@@ -116,6 +116,25 @@ function deferredPage(targetId?: string) {
   );
 }
 const page = deferredPage(config.targetId);
+const feedbackReplies = new Map<string, (text: string) => void>();
+async function reportIssue(message: string, category = 'bug'): Promise<string> {
+  if (typeof message !== 'string' || !message.trim())
+    throw new Error('reportIssue(message) needs text.');
+  flushKeys(); // this cell's typing so far is scrubbed too
+  const id = randomUUID();
+  return new Promise<string>((resolve) => {
+    const timer = setTimeout(() => {
+      feedbackReplies.delete(id);
+      resolve('No answer from the agent process: the report may not have been sent.');
+    }, 5000);
+    feedbackReplies.set(id, (text) => {
+      clearTimeout(timer);
+      feedbackReplies.delete(id);
+      resolve(text);
+    });
+    send({ type: 'feedback', id, message, category: String(category) });
+  });
+}
 let outputFile: string | undefined;
 let runId: string | undefined;
 let cellDeadline = Infinity;
@@ -348,6 +367,13 @@ Object.assign(realm, {
       );
     return path;
   },
+  /**
+   * Tell the Browser Use team that Browser Use itself got in your way (Python report_issue): a helper that misbehaves,
+   * a wrong or missing helper, a confusing error, instructions that are wrong. Not for ordinary website problems.
+   * category: 'bug', 'docs', 'missing' or 'other'. At most 3 per run. -> a short confirmation.
+   */
+  reportIssue,
+  report_issue: reportIssue,
   require: createRequire(join(config.workspace, 'package.json')),
   async screenshot() {
     const current = Reflect.get(realm, 'page') as Page;
@@ -397,9 +423,46 @@ Object.assign(realm, {
     return path;
   },
 });
+// Text the cells type, for the parent to scrub from telemetry (never sent): Python stats.typed and stats.keys.
+let keys = '';
+/** Characters of keys an insertText put there: the keys typed after it are also a text of their own. */
+let inserted = 0;
+const typed = (text: string) =>
+  send({ type: 'typed', ...(runId ? { runId } : {}), text: text.slice(0, 65_536) });
+function flushKeys() {
+  if (keys) typed(keys);
+  if (inserted && keys.length > inserted) typed(keys.slice(inserted));
+  keys = '';
+  inserted = 0;
+}
+function noteTyping(method: string, raw: unknown) {
+  const params = raw as { type?: string; text?: unknown; key?: unknown; modifiers?: unknown };
+  const printable = (s: unknown): s is string =>
+    typeof s === 'string' && [...s].length === 1 && s >= ' ';
+  if (method === 'Input.insertText' && typeof params?.text === 'string' && params.text) {
+    // Alone, and as the start of a run: ax.type inserts all but the last character, then sends it as a key.
+    flushKeys();
+    typed(params.text);
+    keys = params.text.slice(-65_536);
+    inserted = keys.length;
+  } else if (method === 'Input.dispatchKeyEvent' && params?.type !== 'keyUp') {
+    const shortcut = typeof params?.modifiers === 'number' && (params.modifiers & 7) !== 0;
+    // A printable key joins the run; Enter, Tab, a shortcut or another named key ends it ('q' then Enter submits q).
+    if (!shortcut && printable(params?.text)) {
+      const next = keys + params.text;
+      if (next.length > 65_536) inserted = 0;
+      keys = next.slice(-65_536);
+    }
+    // page.pressKey('q'): keyDown without text, then char 'q'.
+    else if (!shortcut && !params?.text && printable(params?.key) && params?.type !== 'char')
+      return;
+    else flushKeys();
+  } else if (method === 'Input.dispatchMouseEvent' && params?.type === 'mousePressed') flushKeys();
+}
 function observe() {
-  if (config.recording)
-    browser.observeCommand = (method, raw, sessionId) => {
+  browser.observeCommand = (method, raw, sessionId) => {
+    noteTyping(method, raw);
+    if (config.recording) {
       const params = raw as { type?: string; x?: number; y?: number };
       const protocolTarget = sessionId ? browser.targetForSession(sessionId) : undefined;
       const targetId = protocolTarget ? browser.observationTargetId : undefined;
@@ -422,7 +485,8 @@ function observe() {
           type: 'action',
           action: { kind: method === 'Page.navigate' ? 'Navigate' : 'Type', targetId },
         });
-    };
+    }
+  };
 }
 observe();
 realm.console = new (await import('node:console')).Console({
@@ -487,6 +551,10 @@ async function evaluate(code: string, captureJson = false): Promise<string | und
 }
 
 process.on('message', async (message: WorkerRequest) => {
+  if (message.type === 'feedbackReply') {
+    feedbackReplies.get(message.id)?.(message.text);
+    return;
+  }
   if (message.type === 'close') {
     browser.close();
     evaluator.disconnect();
@@ -542,6 +610,7 @@ process.on('message', async (message: WorkerRequest) => {
     captureResponse = undefined;
     attachImage = undefined;
   }
+  flushKeys();
   captureText(clean(pendingText));
   pendingText = '';
   if (overflow) output += '\n[Output exceeded the 1 MB capture limit.]';

@@ -57,7 +57,7 @@ Save as `agent.ts`. Run with `node agent.ts` or `bun agent.ts`. Uses [Browser Us
 
 [Quickstart](docs/quickstart.md) · [Browser primitives](docs/browser.md) · [Python](docs/python.md) · [Historical benchmarks](docs/benchmarks.md)
 
-JavaScript runs in a killable worker with filesystem and network access. Use an isolated machine for untrusted tasks. Anonymous run counters are enabled; disable with `telemetry: false` or `DO_NOT_TRACK=1`. [Telemetry](docs/api.md#telemetry)
+JavaScript runs in a killable worker with filesystem and network access. Use an isolated machine for untrusted tasks. Anonymous run counters and the judge's scrubbed verdict are enabled; disable with `telemetry: false` or `DO_NOT_TRACK=1`, or send nothing at all with `BROWSER_USE_OFFLINE=1`. [Telemetry](docs/api.md#telemetry)
 
 ## Develop
 

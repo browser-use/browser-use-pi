@@ -22,7 +22,8 @@ export interface BrowserUseOptions extends DomainOptions {
    */
   webSearch?: { url: string; token: string };
   sensitiveData?: SensitiveData;
-  /** Anonymous run counters. Disable with false, DO_NOT_TRACK=1 or ANONYMIZED_TELEMETRY=false. */
+  /** Anonymous run counters, the judge's verdict and reportIssue(). Disable with false, DO_NOT_TRACK=1,
+   * ANONYMIZED_TELEMETRY=false or BROWSER_USE_OFFLINE=1 (which also stops feedback()). */
   telemetry?: boolean;
   /**
    * provider/model ID, e.g. openai/gpt-5.4. Default browser-use/bu-4.0 (Python 1.0.6): the Browser Use gateway with

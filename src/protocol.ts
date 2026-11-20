@@ -67,12 +67,18 @@ export type WorkerRequest =
       /** The cell deadline, so long helpers can return before it. */
       timeoutMs?: number;
     }
-  | { type: 'close' };
+  | { type: 'close' }
+  /** The parent's answer to a cell's reportIssue(). */
+  | { type: 'feedbackReply'; id: string; text: string };
 export type WorkerResponse =
   | { type: 'action'; action: BrowserAction }
   | { type: 'owned'; targetId: string }
   | { type: 'endpoint'; endpoint: string }
   | { type: 'partial'; runId?: string; path: string; valueJson: string }
+  /** reportIssue() from a cell: the parent decides whether it is sent and answers with feedbackReply. */
+  | { type: 'feedback'; id: string; message: string; category: string }
+  /** Text a cell typed (Input.insertText, key runs): kept by the parent only to scrub it from telemetry, never sent. */
+  | { type: 'typed'; runId?: string; text: string }
   | { type: 'ready'; targetId: string }
   | { type: 'result'; result: CellResult }
   | { type: 'error'; message: string; result?: CellResult }

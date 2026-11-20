@@ -127,4 +127,10 @@ A new `run` or `followUp` starts a new partial-result scope. It does not silentl
 
 Anonymous run counters go to our EU PostHog project. Payload: random process ID, SDK version, OS, Node major version, browser mode, stop status, steps, duration, input/output token counts and estimated cost. No persistent user ID, model ID, tasks, URLs, page content, paths, credentials or raw errors. No person profiles or GeoIP enrichment; the ingestion service still receives the network request.
 
-Disable with `telemetry: false`, `DO_NOT_TRACK=1`, or `ANONYMIZED_TELEMETRY=false`. Requests are best-effort with a one-second timeout, no retries, and never change task results. Node tests disable telemetry automatically.
+After a judged run, `library_judgement` goes to the browser-use library project (same EU host): the judge's verdict booleans, its failure reason, description and up to 5 gotchas (each scrubbed, 300 characters), the run ID, model ID and judge cost. `hosts` is `[]`. `BROWSER_USE_ZDR=1` sends the booleans only (`texts_withheld: true`).
+
+Feedback goes to the same project as `library_feedback`. The agent can call `await reportIssue(message, category)` in a cell (at most 3 per run; nothing is sent with telemetry off). You can call `feedback(message, category)` yourself; it sends even with telemetry off, because you asked. Categories are `'bug'`, `'docs'`, `'missing'` and `'other'`.
+
+Every text is scrubbed before it is sent, using the Python `stats.scrub` rules. The task, the agent's typed text and `sensitiveData` values become placeholders. So do API keys, tokens, cookies, emails, URL user info, queries and fragments, URL path tokens, home folder user names and runs of 6+ digits.
+
+Disable with `telemetry: false`, `DO_NOT_TRACK=1`, or `ANONYMIZED_TELEMETRY=false`. `BROWSER_USE_OFFLINE=1` sends nothing at all, including `feedback()`. Requests are best-effort with a one-second timeout, no retries, and never change task results. Node tests disable telemetry automatically.
