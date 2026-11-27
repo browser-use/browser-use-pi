@@ -33,7 +33,7 @@ jobs:
       - if: steps.v.outputs.skip != '1'
         run: npm ci
       - if: steps.v.outputs.skip != '1'
-        run: npm run check && npm run build
+        run: npm run build && npm run check
       - if: steps.v.outputs.skip != '1'
         name: Publish
         run: npx -y npm@11 publish --access public
