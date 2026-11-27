@@ -57,10 +57,10 @@ Install `@browser_use/pi` and change your imports. The `BrowserUse` API, browser
 
 The public package is `@browser_use/pi`. Releases publish from GitHub Actions with [npm trusted publishing](https://docs.npmjs.com/trusted-publishers); no npm token lives in this repository.
 
-One-time setup by an npm owner of `@browser_use/pi` (npm 11):
+One-time setup by an npm owner of `@browser_use/pi` (`npm trust` needs a recent npm 11, pinned here):
 
 ```sh
-npm trust github @browser_use/pi --repo browser-use/browser-use-pi --file publish.yml --allow-publish
+npx -y npm@11.19.1 trust github @browser_use/pi --repo browser-use/browser-use-pi --file publish.yml --allow-publish
 ```
 
 Or on npmjs.com: package Settings, Trusted Publisher, GitHub Actions, organization `browser-use`, repository `browser-use-pi`, workflow `publish.yml`.
@@ -68,7 +68,8 @@ Or on npmjs.com: package Settings, Trusted Publisher, GitHub Actions, organizati
 To release: bump `version` in `package.json`, run `npm run check && npm test && npm run test:bun`, merge, then push a matching tag:
 
 ```sh
-git tag v0.2.0 && git push origin v0.2.0
+V=v$(node -p "require('./package.json').version")
+git tag "$V" && git push origin "$V"
 ```
 
 `.github/workflows/publish.yml` checks that the tag matches `package.json`, skips versions already on npm, builds and publishes with provenance. npm versions cannot be overwritten; bump the version for each later release.
