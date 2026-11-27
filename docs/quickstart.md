@@ -55,16 +55,20 @@ Install `@browser_use/pi` and change your imports. The `BrowserUse` API, browser
 
 ## Publish to npm (maintainers)
 
-The public package is `@browser_use/pi`. Use an npm account with publish permission in the `browser_use` organization and complete npm's required 2FA setup.
+The public package is `@browser_use/pi`. Releases publish from GitHub Actions with [npm trusted publishing](https://docs.npmjs.com/trusted-publishers); no npm token lives in this repository.
+
+One-time setup by an npm owner of `@browser_use/pi` (npm 11):
 
 ```sh
-npm login
-npm whoami
-npm run check && npm test && npm run test:bun
-npm pack
-npm publish ./browser_use-pi-0.1.0.tgz --access public --dry-run
-# After verifying that exact tarball:
-npm publish ./browser_use-pi-0.1.0.tgz --access public
+npm trust github @browser_use/pi --repo browser-use/browser-use-pi --file publish.yml --allow-publish
 ```
 
-`npm test` runs the full Node suite. `npm run test:bun` runs browser, agent, session, policy, recording and recovery tests in Bun; Node-specific test mocks stay in the Node suite. Install and smoke-test the tarball in a clean project before publishing. npm versions cannot be overwritten; bump the version for each later release. For automated releases, configure [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) for the final GitHub repository name. No npm token needs to live in this repository.
+Or on npmjs.com: package Settings, Trusted Publisher, GitHub Actions, organization `browser-use`, repository `browser-use-pi`, workflow `publish.yml`.
+
+To release: bump `version` in `package.json`, run `npm run check && npm test && npm run test:bun`, merge, then push a matching tag:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/publish.yml` checks that the tag matches `package.json`, skips versions already on npm, builds and publishes with provenance. npm versions cannot be overwritten; bump the version for each later release.
