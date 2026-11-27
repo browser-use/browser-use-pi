@@ -1,0 +1,39 @@
+name: Publish to npm
+
+# Push a tag like v0.2.0 (must match package.json) to publish.
+# Uses npm trusted publishing (OIDC): no npm token is stored in this repo.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check version
+        id: v
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NAME=$(node -p "require('./package.json').name")
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json v${VERSION}"; exit 1
+          fi
+          if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "${NAME}@${VERSION} is already on npm, nothing to do"; echo "skip=1" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.v.outputs.skip != '1'
+        run: npm ci
+      - if: steps.v.outputs.skip != '1'
+        run: npm run check && npm run build
+      - if: steps.v.outputs.skip != '1'
+        name: Publish
+        run: npx -y npm@11 publish --access public
