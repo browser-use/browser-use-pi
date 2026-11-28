@@ -35,6 +35,7 @@ export interface WorkerConfig extends importPolicy {
   recording?: boolean;
   highlightActions?: boolean;
   approveConnection?: boolean;
+  cdpHeaders?: Record<string, string>;
   workspace: string;
   targetId?: string;
   focusTab?: boolean;

@@ -27,6 +27,8 @@ export interface BrowserUseOptions extends DomainOptions {
   /** provider/model ID, e.g. openai/gpt-5.4. No model is silently substituted. */
   model: string;
   browser?: BrowserOptions;
+  /** HTTP headers, such as a User-Agent, on each CDP discovery request and WebSocket dial to the browser. */
+  cdpHeaders?: Record<string, string>;
   /** Persistent output directory. Defaults to a new OS temporary directory. */
   workspace?: string;
   /** Supply a Pi collection for custom providers or freshly released model definitions. */

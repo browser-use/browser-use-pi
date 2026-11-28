@@ -329,6 +329,7 @@ export class BrowserRuntime {
         this.config.endpoint,
         this.config.operationTimeoutMs,
         this.config.approveConnection,
+        this.config.cdpHeaders,
       );
       try {
         const { targetInfos } = await cdp.send('Target.getTargets');

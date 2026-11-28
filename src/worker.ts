@@ -22,7 +22,12 @@ const config = await new Promise<WorkerConfig>((resolve) => process.once('messag
 const clean = <T>(value: T): T => redact(value, config.redact ?? []);
 const send = (message: WorkerResponse) => process.send!(clean(message));
 process.chdir(config.workspace);
-let browser = CDP.lazy(config.endpoint, config.operationTimeoutMs, config.approveConnection);
+let browser = CDP.lazy(
+  config.endpoint,
+  config.operationTimeoutMs,
+  config.approveConnection,
+  config.cdpHeaders,
+);
 installDomainPolicy(browser, config, (id) => send({ type: 'owned', targetId: id }));
 let highlight = config.highlightActions ? actionHighlighter(browser) : undefined;
 let tabs = new Tabs(browser, (id) => send({ type: 'owned', targetId: id }));
@@ -206,7 +211,12 @@ Object.assign(realm, {
       send({ type: 'endpoint', endpoint });
     }
     browser.close();
-    browser = CDP.lazy(config.endpoint, config.operationTimeoutMs, config.approveConnection);
+    browser = CDP.lazy(
+      config.endpoint,
+      config.operationTimeoutMs,
+      config.approveConnection,
+      config.cdpHeaders,
+    );
     installDomainPolicy(browser, config, (id) => send({ type: 'owned', targetId: id }));
     highlight = config.highlightActions ? actionHighlighter(browser) : undefined;
     browser.observeResponse = captureResponse;

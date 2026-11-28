@@ -76,19 +76,31 @@ export class CDP {
 
   private endpoint: string | undefined;
   private approveConnection = false;
+  private headers: Record<string, string> | undefined;
   private delegate: Promise<CDP> | undefined;
   private closed = false;
 
   /** Defer network access until the first browser operation. Never replay a command. */
-  static lazy(endpoint: string, timeoutMs = 15_000, approveConnection = false) {
+  static lazy(
+    endpoint: string,
+    timeoutMs = 15_000,
+    approveConnection = false,
+    headers?: Record<string, string>,
+  ) {
     const connection = new CDP(undefined, timeoutMs);
     connection.endpoint = endpoint;
     connection.approveConnection = approveConnection;
+    connection.headers = headers;
     return connection;
   }
   private connected(): Promise<CDP> {
     if (this.closed) return Promise.reject(new Error('CDP connection is closed.'));
-    this.delegate ??= CDP.connect(this.endpoint!, this.timeoutMs, this.approveConnection)
+    this.delegate ??= CDP.connect(
+      this.endpoint!,
+      this.timeoutMs,
+      this.approveConnection,
+      this.headers,
+    )
       .then((connection) => {
         if (this.closed) {
           connection.close();
@@ -112,6 +124,7 @@ export class CDP {
     endpoint: string,
     timeoutMs = 15_000,
     approveConnection = false,
+    headers?: Record<string, string>,
   ): Promise<CDP> {
     if (approveConnection && process.platform !== 'darwin')
       throw new Error('Chrome approval is macOS only.');
@@ -121,12 +134,16 @@ export class CDP {
     const url = new URL(endpoint);
     if (url.protocol === 'http:' || url.protocol === 'https:') {
       url.pathname = `${url.pathname.replace(/\/$/, '')}/json/version`;
-      const response = await fetch(url, { signal: AbortSignal.timeout(connectMs) });
+      const response = await fetch(url, {
+        ...(headers ? { headers } : {}),
+        signal: AbortSignal.timeout(connectMs),
+      });
       if (!response.ok) throw new Error(`CDP discovery failed (${response.status}).`);
       endpoint = ((await response.json()) as { webSocketDebuggerUrl: string }).webSocketDebuggerUrl;
     } else if (!['ws:', 'wss:'].includes(url.protocol))
       throw new Error('Unsupported CDP endpoint protocol.');
-    const socket = new WebSocket(endpoint);
+    // Node and Bun read headers from this argument, but the DOM types declare only protocols.
+    const socket = new WebSocket(endpoint, headers && ({ headers } as unknown as string[]));
     const connection = new CDP(socket, timeoutMs);
     await new Promise<void>((resolve, reject) => {
       const approval = new AbortController();
