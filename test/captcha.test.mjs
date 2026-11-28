@@ -14,8 +14,14 @@ import { BrowserUse } from '../dist/index.js';
 async function fakeBrowser(handle) {
   const commands = [];
   const sockets = new Set();
-  const server = createServer();
+  // Each discovery request and WebSocket dial, as [path, User-Agent].
+  const dials = [];
+  const server = createServer((req, res) => {
+    dials.push([req.url, req.headers['user-agent']]);
+    res.end(JSON.stringify({ webSocketDebuggerUrl: `${url}?token=t` }));
+  });
   server.on('upgrade', (req, socket) => {
+    dials.push([req.url, req.headers['user-agent']]);
     const accept = createHash('sha1')
       .update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
       .digest('base64');
@@ -77,6 +83,7 @@ async function fakeBrowser(handle) {
   return {
     url,
     commands,
+    dials,
     emit,
     async connect() {
       const cdp = await CDP.connect(url, 1000);
@@ -505,6 +512,39 @@ test('the REPL helper solves within the cell and cells report solves that run on
     await fake.close();
     await rm(workspace, { recursive: true, force: true });
   }
+});
+
+test('cdpHeaders go on each discovery request and WebSocket dial, and the token stays', async () => {
+  const fake = await fakeBrowser(
+    solverOff((emit) => emit('BrowserUse.captchaSolverFinished', finished(true), 20)),
+  );
+  const workspace = await mkdtemp(join(tmpdir(), 'bu-captcha-test-'));
+  const agent = await BrowserUse.create({
+    model: 'openai/gpt-5.4',
+    browser: { cdpUrl: `${fake.url.replace('ws:', 'http:').replace(/\/devtools.*/, '')}/?token=t` },
+    cdpHeaders: { 'User-Agent': 'browser-use-internal/test' },
+    workspace,
+  });
+  try {
+    await agent.execute('await solveCaptcha()');
+  } finally {
+    await agent.close();
+    await fake.close();
+    await rm(workspace, { recursive: true, force: true });
+  }
+  const ua = 'browser-use-internal/test';
+  assert.deepEqual(fake.dials.slice(0, 2), [
+    ['/json/version?token=t', ua],
+    ['/devtools/browser/fake?token=t', ua],
+  ]);
+  assert.deepEqual(
+    fake.dials.filter(([path, agent]) => !path.endsWith('?token=t') || agent !== ua),
+    [],
+  );
+  await assert.rejects(
+    BrowserUse.create({ model: 'openai/gpt-5.4', cdpHeaders: { 'User-Agent': 1 } }),
+    /cdpHeaders must map names to strings/,
+  );
 });
 
 test('captchaSolver: false never turns the solver on and says so (Python captcha_solver=False)', async () => {

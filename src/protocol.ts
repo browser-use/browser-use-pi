@@ -43,6 +43,7 @@ export interface WorkerConfig extends importPolicy {
   recording?: boolean;
   highlightActions?: boolean;
   approveConnection?: boolean;
+  cdpHeaders?: Record<string, string>;
   workspace: string;
   /** A browser this SDK launched: where its downloads are saved (workspace/downloads). */
   downloadPath?: string;

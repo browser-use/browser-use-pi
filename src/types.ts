@@ -37,6 +37,8 @@ export interface BrowserUseOptions extends DomainOptions {
   /** The user's own success criteria for the judge (Python judge_context). */
   judgeContext?: string;
   browser?: BrowserOptions;
+  /** HTTP headers, such as a User-Agent, on each CDP discovery request and WebSocket dial to the browser. */
+  cdpHeaders?: Record<string, string>;
   /** Persistent output directory. Defaults to a new OS temporary directory. */
   workspace?: string;
   /** Supply a Pi collection for custom providers or freshly released model definitions. */

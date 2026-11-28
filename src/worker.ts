@@ -26,7 +26,12 @@ const config = await new Promise<WorkerConfig>((resolve) => process.once('messag
 const clean = <T>(value: T): T => redact(value, config.redact ?? []);
 const send = (message: WorkerResponse) => process.send!(clean(message));
 process.chdir(config.workspace);
-let browser = CDP.lazy(config.endpoint, config.operationTimeoutMs, config.approveConnection);
+let browser = CDP.lazy(
+  config.endpoint,
+  config.operationTimeoutMs,
+  config.approveConnection,
+  config.cdpHeaders,
+);
 installDomainPolicy(browser, config, (id) => send({ type: 'owned', targetId: id }));
 browser.nameDialogs = config.mode !== 'ultrafast';
 /** Downloads the browser announced, by guid; downloads() lists the finished ones (Python 1.0.5 cbaffd69a). */
@@ -275,7 +280,12 @@ Object.assign(realm, {
       send({ type: 'endpoint', endpoint });
     }
     browser.close();
-    browser = CDP.lazy(config.endpoint, config.operationTimeoutMs, config.approveConnection);
+    browser = CDP.lazy(
+      config.endpoint,
+      config.operationTimeoutMs,
+      config.approveConnection,
+      config.cdpHeaders,
+    );
     installDomainPolicy(browser, config, (id) => send({ type: 'owned', targetId: id }));
     browser.nameDialogs = config.mode !== 'ultrafast';
     watchDownloads();
