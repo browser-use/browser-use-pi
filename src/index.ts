@@ -121,6 +121,13 @@ export class BrowserUse {
         Object.values(options.shellEnv).some((value) => typeof value !== 'string'))
     )
       throw new Error('shellEnv must map names to strings.');
+    if (
+      options.cdpHeaders !== undefined &&
+      (typeof options.cdpHeaders !== 'object' ||
+        options.cdpHeaders === null ||
+        Object.values(options.cdpHeaders).some((value) => typeof value !== 'string'))
+    )
+      throw new Error('cdpHeaders must map names to strings.');
     if (options.mode !== undefined && options.mode !== 'default' && options.mode !== 'ultrafast')
       throw new Error("mode must be 'default' or 'ultrafast'.");
     if (
@@ -235,6 +242,7 @@ export class BrowserUse {
         ...(options.redact ? { redact: options.redact } : {}),
         approveConnection:
           options.browser?.kind === 'chrome' && !!options.browser.approveConnection,
+        ...(options.cdpHeaders ? { cdpHeaders: options.cdpHeaders } : {}),
         recording: !!options.recording,
         highlightActions: !!options.highlightActions,
         ...(options.browser && 'targetId' in options.browser && options.browser.targetId
@@ -417,6 +425,7 @@ export class BrowserUse {
             this.runtime.endpoint,
             targetId,
             this.config.browser?.kind === 'chrome' && !!this.config.browser.approveConnection,
+            this.config.cdpHeaders,
           );
           this.runtime.onAction = (action) => recorder?.action(action);
         } catch (error) {
