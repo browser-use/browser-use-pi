@@ -515,32 +515,40 @@ test('the REPL helper solves within the cell and cells report solves that run on
 });
 
 test('cdpHeaders go on each discovery request and WebSocket dial, and the token stays', async () => {
+  const answers = {
+    'Target.createTarget': { targetId: 'T9' },
+    'Target.attachToTarget': { sessionId: 'S9' },
+    'Target.getTargets': { targetInfos: [] },
+  };
+  const solver = solverOff((emit) => emit('BrowserUse.captchaSolverFinished', finished(true), 20));
   const fake = await fakeBrowser(
-    solverOff((emit) => emit('BrowserUse.captchaSolverFinished', finished(true), 20)),
+    (message, emit) => answers[message.method] ?? solver(message, emit),
   );
+  const http = `${fake.url.replace('ws:', 'http:').replace(/\/devtools.*/, '')}/?token=`;
   const workspace = await mkdtemp(join(tmpdir(), 'bu-captcha-test-'));
   const agent = await BrowserUse.create({
     model: 'openai/gpt-5.4',
-    browser: { cdpUrl: `${fake.url.replace('ws:', 'http:').replace(/\/devtools.*/, '')}/?token=t` },
+    browser: { cdpUrl: `${http}t` },
     cdpHeaders: { 'User-Agent': 'browser-use-internal/test' },
+    browserSwitching: true,
     workspace,
   });
   try {
     await agent.execute('await solveCaptcha()');
+    // The new tab makes the close path dial again to close it.
+    await agent.execute(`await reconnect(${JSON.stringify(`${http}u`)}); await tabs.open()`);
   } finally {
     await agent.close();
     await fake.close();
     await rm(workspace, { recursive: true, force: true });
   }
   const ua = 'browser-use-internal/test';
-  assert.deepEqual(fake.dials.slice(0, 2), [
-    ['/json/version?token=t', ua],
-    ['/devtools/browser/fake?token=t', ua],
-  ]);
-  assert.deepEqual(
-    fake.dials.filter(([path, agent]) => !path.endsWith('?token=t') || agent !== ua),
-    [],
-  );
+  const dial = (token) => [
+    [`/json/version?token=${token}`, ua],
+    [`/devtools/browser/fake?token=t`, ua],
+  ];
+  // The first cell, the reconnect, and the close path each discover and dial once.
+  assert.deepEqual(fake.dials, [...dial('t'), ...dial('u'), ...dial('u')]);
   await assert.rejects(
     BrowserUse.create({ model: 'openai/gpt-5.4', cdpHeaders: { 'User-Agent': 1 } }),
     /cdpHeaders must map names to strings/,
