@@ -18,7 +18,7 @@ async function fakeBrowser(handle) {
   const dials = [];
   const server = createServer((req, res) => {
     dials.push([req.url, req.headers['user-agent']]);
-    res.end(JSON.stringify({ webSocketDebuggerUrl: `${url}?token=t` }));
+    res.end(JSON.stringify({ webSocketDebuggerUrl: url + new URL(req.url, url).search }));
   });
   server.on('upgrade', (req, socket) => {
     dials.push([req.url, req.headers['user-agent']]);
@@ -545,7 +545,7 @@ test('cdpHeaders go on each discovery request and WebSocket dial, and the token 
   const ua = 'browser-use-internal/test';
   const dial = (token) => [
     [`/json/version?token=${token}`, ua],
-    [`/devtools/browser/fake?token=t`, ua],
+    [`/devtools/browser/fake?token=${token}`, ua],
   ];
   // The first cell, the reconnect, and the close path each discover and dial once.
   assert.deepEqual(fake.dials, [...dial('t'), ...dial('u'), ...dial('u')]);
