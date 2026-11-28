@@ -18,7 +18,10 @@ async function fakeBrowser(handle) {
   const dials = [];
   const server = createServer((req, res) => {
     dials.push([req.url, req.headers['user-agent']]);
-    res.end(JSON.stringify({ webSocketDebuggerUrl: url + new URL(req.url, url).search }));
+    // Answer with fixed tokens only, so the response holds no request text.
+    const token = new URL(req.url, url).searchParams.get('token') === 'u' ? 'u' : 't';
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ webSocketDebuggerUrl: `${url}?token=${token}` }));
   });
   server.on('upgrade', (req, socket) => {
     dials.push([req.url, req.headers['user-agent']]);
